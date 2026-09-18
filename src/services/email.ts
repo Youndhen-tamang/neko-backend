@@ -1,5 +1,13 @@
-import nodemailer from "nodemailer";
+import nodemailer, { type Transporter } from "nodemailer";
 import { env } from "../config/env";
+
+type SendEmailOptions = {
+  to: string | string[];
+  subject: string;
+  html?: string;
+  text?: string;
+  from?: string;
+};
 
 type InvoiceEmail = {
   to: string;
@@ -13,6 +21,45 @@ type InvoiceEmail = {
   currency: string;
 };
 
+let transporter: Transporter | null = null;
+
+function isSmtpConfigured() {
+  return Boolean(env.smtp.host && env.smtp.user);
+}
+
+function getTransporter(): Transporter | null {
+  if (!isSmtpConfigured()) return null;
+  if (!transporter) {
+    transporter = nodemailer.createTransport({
+      host: env.smtp.host,
+      port: env.smtp.port,
+      secure: env.smtp.secure,
+      auth: {
+        user: env.smtp.user,
+        pass: env.smtp.pass,
+      },
+    });
+  }
+  return transporter;
+}
+
+export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
+  const mailer = getTransporter();
+  if (!mailer) {
+    console.warn("SMTP is not configured; skipping email");
+    return false;
+  }
+
+  await mailer.sendMail({
+    from: options.from ?? env.smtp.user,
+    to: options.to,
+    subject: options.subject,
+    html: options.html,
+    text: options.text,
+  });
+  return true;
+}
+
 function money(cents: number, currency: string) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -21,21 +68,6 @@ function money(cents: number, currency: string) {
 }
 
 export async function sendInvoiceEmail(payload: InvoiceEmail): Promise<boolean> {
-  if (!env.smtp.host || !env.smtp.user) {
-    console.warn("SMTP is not configured; skipping invoice email");
-    return false;
-  }
-
-  const transporter = nodemailer.createTransport({
-    host: env.smtp.host,
-    port: env.smtp.port,
-    secure: env.smtp.secure,
-    auth: {
-      user: env.smtp.user,
-      pass: env.smtp.pass,
-    },
-  });
-
   const rows = payload.items
     .map(
       (item) =>
@@ -67,12 +99,10 @@ export async function sendInvoiceEmail(payload: InvoiceEmail): Promise<boolean> 
     </div>
   `;
 
-  await transporter.sendMail({
+  return sendEmail({
     from: `"${payload.agencyName}" <${env.smtp.user}>`,
     to: payload.to,
     subject: `Invoice ${payload.invoiceNumber} from ${payload.agencyName}`,
     html,
   });
-
-  return true;
 }

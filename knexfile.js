@@ -10,4 +10,9 @@ module.exports = {
     extension: "ts",
     loadExtensions: [".ts"],
   },
+  seeds: {
+    directory: "./seeds",
+    extension: "ts",
+    loadExtensions: [".ts"],
+  },
 };
