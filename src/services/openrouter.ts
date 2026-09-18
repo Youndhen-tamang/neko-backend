@@ -27,7 +27,7 @@ export async function openRouterChat(messages: ChatMessage[], json = false): Pro
       "X-Title": "CS Ecommerce",
     },
     body: JSON.stringify({
-      model: "openrouter/free",
+      model: "google/gemini-2.5-flash-lite",
       temperature: json ? 0.2 : 0.4,
       messages,
       ...(json ? { response_format: { type: "json_object" } } : {}),
