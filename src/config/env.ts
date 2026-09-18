@@ -39,4 +39,13 @@ export const env = {
     pass: process.env.SMTP_PASS ?? "",
   },
   openRouterKey: process.env.OPENROUTER_API_KEY ?? "",
+  whatsapp: {
+    verifyToken: process.env.WHATSAPP_VERIFY_TOKEN ?? "",
+    appSecret: process.env.WHATSAPP_APP_SECRET ?? "",
+    graphVersion: process.env.WHATSAPP_GRAPH_VERSION ?? "v21.0",
+  },
+  integrationSecretKey: process.env.INTEGRATION_SECRET_KEY ?? "",
+  tryon: {
+    model: process.env.TRYON_MODEL ?? "google/gemini-2.5-flash-image",
+  },
 };

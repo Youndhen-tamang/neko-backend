@@ -13,7 +13,9 @@ export type ProductDraft = {
   suggested_price_range?: string;
 };
 
-export async function openRouterChat(messages: ChatMessage[], json = false): Promise<string> {
+const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
+
+async function openRouterRequest(body: Record<string, unknown>, timeoutMs: number) {
   if (!env.openRouterKey) {
     throw new HttpError(500, "OPENROUTER_API_KEY is not configured");
   }
@@ -26,23 +28,59 @@ export async function openRouterChat(messages: ChatMessage[], json = false): Pro
       "HTTP-Referer": env.storeUrl,
       "X-Title": "CS Ecommerce",
     },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash-lite",
-      temperature: json ? 0.2 : 0.4,
-      messages,
-      ...(json ? { response_format: { type: "json_object" } } : {}),
-    }),
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new HttpError(502, `OpenRouter error: ${body}`);
+    const text = await response.text();
+    throw new HttpError(502, `OpenRouter error: ${text}`);
   }
 
-  const data = (await response.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
+  return response.json();
+}
+
+export async function openRouterChat(
+  messages: ChatMessage[],
+  json = false,
+  opts: { model?: string } = {}
+): Promise<string> {
+  const data = (await openRouterRequest(
+    {
+      model: opts.model ?? DEFAULT_MODEL,
+      temperature: json ? 0.2 : 0.4,
+      messages,
+      ...(json ? { response_format: { type: "json_object" } } : {}),
+    },
+    60_000
+  )) as { choices?: { message?: { content?: string } }[] };
   return data.choices?.[0]?.message?.content ?? "";
+}
+
+/**
+ * Image-output request. OpenRouter returns generated images as base64 data URLs
+ * under message.images[] when `modalities` includes "image".
+ */
+export async function openRouterGenerateImage(
+  messages: ChatMessage[],
+  opts: { model?: string } = {}
+): Promise<{ imageDataUrl: string; text: string; model: string }> {
+  const model = opts.model ?? env.tryon.model;
+  const data = (await openRouterRequest({ model, messages, modalities: ["image", "text"] }, 120_000)) as {
+    choices?: {
+      message?: {
+        content?: string;
+        images?: { type?: string; image_url?: { url?: string } }[];
+      };
+    }[];
+  };
+
+  const message = data.choices?.[0]?.message;
+  const imageDataUrl = message?.images?.[0]?.image_url?.url;
+  if (!imageDataUrl) {
+    throw new HttpError(502, "The image model did not return an image");
+  }
+  return { imageDataUrl, text: message?.content ?? "", model };
 }
 
 export async function draftProductFromImage(imageUrl: string): Promise<ProductDraft> {

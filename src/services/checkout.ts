@@ -20,6 +20,7 @@ export type CreateCheckoutInput = {
   successPath?: string;
   cancelPath?: string;
   successQuery?: string;
+  metadata?: Record<string, string>;
 };
 
 function productImages(value: unknown): string[] {
@@ -72,6 +73,7 @@ export async function createCheckoutSession(input: CreateCheckoutInput) {
       },
     })),
     metadata: {
+      ...(input.metadata ?? {}),
       agencyId: input.agency.id,
       agencySlug: input.agency.slug,
       customerName: input.customerName,

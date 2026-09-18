@@ -6,8 +6,10 @@ import { db } from "../../db/knex";
 import { requireAuth } from "../../middleware/auth";
 import { requireAgencyMatch, resolveTenant } from "../../middleware/tenant";
 import { uploadImage } from "../../services/cloudinary";
+import { fetchPhoneProfile } from "../../services/whatsapp";
 import { DEFAULT_LANDING_TEMPLATE, LANDING_TEMPLATES } from "../../types";
 import { asyncHandler, HttpError } from "../../utils/http";
+import { decryptSecret, encryptSecret } from "../../utils/secrets";
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -99,6 +101,105 @@ router.post(
       .update({ logo_url: logoUrl, updated_at: new Date() })
       .returning("*");
     res.json({ settings: agency, logoUrl });
+  })
+);
+
+function apiBaseUrl(req: { protocol: string; get: (name: string) => string | undefined }) {
+  return process.env.PUBLIC_API_URL || `${req.protocol}://${req.get("host")}`;
+}
+
+function whatsappView(row: Record<string, unknown> | undefined, webhookUrl: string) {
+  return {
+    enabled: Boolean(row?.enabled),
+    phoneNumberId: (row?.phone_number_id as string | null) ?? "",
+    displayPhone: (row?.display_phone as string | null) ?? "",
+    hasAccessToken: Boolean(row?.access_token_enc),
+    accessTokenLast4: (row?.access_token_last4 as string | null) ?? null,
+    webhookUrl,
+    verifyTokenConfigured: Boolean(env.whatsapp.verifyToken),
+  };
+}
+
+router.get(
+  "/whatsapp",
+  asyncHandler(async (req, res) => {
+    const row = await db("agency_integrations")
+      .where({ agency_id: req.agency!.id, provider: "whatsapp" })
+      .first();
+    res.json({ whatsapp: whatsappView(row, `${apiBaseUrl(req)}/api/webhooks/whatsapp`) });
+  })
+);
+
+router.put(
+  "/whatsapp",
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        enabled: z.boolean(),
+        phoneNumberId: z.string().trim().optional(),
+        displayPhone: z.string().trim().optional(),
+        accessToken: z.string().trim().optional(),
+      })
+      .parse(req.body);
+
+    const existing = await db("agency_integrations")
+      .where({ agency_id: req.agency!.id, provider: "whatsapp" })
+      .first();
+
+    const phoneNumberId = body.phoneNumberId ?? existing?.phone_number_id ?? null;
+    const hasToken = Boolean(body.accessToken) || Boolean(existing?.access_token_enc);
+    if (body.enabled && (!phoneNumberId || !hasToken)) {
+      throw new HttpError(400, "Add the phone number ID and access token before enabling WhatsApp");
+    }
+
+    if (phoneNumberId) {
+      const clash = await db("agency_integrations")
+        .where({ phone_number_id: phoneNumberId })
+        .whereNot({ agency_id: req.agency!.id })
+        .first();
+      if (clash) throw new HttpError(409, "That phone number ID is already connected to another store");
+    }
+
+    const record: Record<string, unknown> = {
+      enabled: body.enabled,
+      phone_number_id: phoneNumberId,
+      updated_at: new Date(),
+    };
+    if (body.displayPhone !== undefined) record.display_phone = body.displayPhone || null;
+    if (body.accessToken) {
+      record.access_token_enc = encryptSecret(body.accessToken);
+      record.access_token_last4 = body.accessToken.slice(-4);
+    }
+
+    const [row] = await db("agency_integrations")
+      .insert({ id: crypto.randomUUID(), agency_id: req.agency!.id, provider: "whatsapp", ...record })
+      .onConflict(["agency_id", "provider"])
+      .merge(record)
+      .returning("*");
+
+    res.json({ whatsapp: whatsappView(row, `${apiBaseUrl(req)}/api/webhooks/whatsapp`) });
+  })
+);
+
+router.post(
+  "/whatsapp/test",
+  asyncHandler(async (req, res) => {
+    const row = await db("agency_integrations")
+      .where({ agency_id: req.agency!.id, provider: "whatsapp" })
+      .first();
+    if (!row?.access_token_enc || !row.phone_number_id) {
+      throw new HttpError(400, "Save a phone number ID and access token first");
+    }
+    const profile = await fetchPhoneProfile({
+      accessToken: decryptSecret(row.access_token_enc),
+      phoneNumberId: row.phone_number_id,
+    });
+    res.json({
+      ok: true,
+      displayPhoneNumber: profile.display_phone_number ?? null,
+      verifiedName: profile.verified_name ?? null,
+      qualityRating: profile.quality_rating ?? null,
+    });
   })
 );
 

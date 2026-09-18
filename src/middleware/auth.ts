@@ -1,27 +1,14 @@
 import { NextFunction, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../config/env";
-import { AuthUser, Role } from "../types";
+import { Agency, AuthUser, Role } from "../types";
 import { HttpError } from "../utils/http";
 
 declare global {
   namespace Express {
     interface Request {
       user?: AuthUser;
-      agency?: {
-        id: string;
-        name: string;
-        slug: string;
-        brand_name: string;
-        logo_url: string | null;
-        primary_color: string;
-        email: string | null;
-        phone: string | null;
-        address: string | null;
-        tagline: string | null;
-        landing_template: string;
-        status: string;
-      };
+      agency?: Agency;
     }
   }
 }
