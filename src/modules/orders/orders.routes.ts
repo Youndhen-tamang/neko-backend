@@ -1,15 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
-import { env } from "../../config/env";
 import { db } from "../../db/knex";
 import { requireAuth } from "../../middleware/auth";
 import { requireAgencyMatch, resolveTenant } from "../../middleware/tenant";
+import { createCheckoutSession } from "../../services/checkout";
 import { createNotification } from "../../services/notifications";
 import { fulfillStripeSession } from "../../services/fulfillment";
-import { getStripe } from "../../services/stripe";
 import { ORDER_STATUSES } from "../../types";
 import { asyncHandler, HttpError } from "../../utils/http";
-import { storeUrlForSlug } from "../../utils/tenant";
 
 const router = Router();
 
@@ -35,74 +33,16 @@ router.post(
       .parse(req.body);
 
     const agency = req.agency!;
-    const products = await db("products")
-      .whereIn(
-        "id",
-        body.items.map((item) => item.productId)
-      )
-      .andWhere({ agency_id: agency.id, status: "published" });
-
-    if (products.length !== body.items.length) {
-      throw new HttpError(400, "One or more products are unavailable");
-    }
-
-    const lineItems = body.items.map((item) => {
-      const product = products.find((row) => row.id === item.productId)!;
-      if (product.stock < item.quantity) {
-        throw new HttpError(400, `${product.name} does not have enough stock`);
-      }
-      return {
-        product,
-        quantity: item.quantity,
-        unitPriceCents: product.price_cents as number,
-      };
+    const checkout = await createCheckoutSession({
+      agency,
+      customerName: body.customerName,
+      customerEmail: body.customerEmail,
+      customerPhone: body.customerPhone,
+      shippingAddress: body.shippingAddress,
+      items: body.items,
     });
 
-    const subtotal = lineItems.reduce(
-      (sum, item) => sum + item.unitPriceCents * item.quantity,
-      0
-    );
-
-    const stripe = getStripe();
-    const session = await stripe.checkout.sessions.create({
-      mode: "payment",
-      customer_email: body.customerEmail,
-      success_url: `${storeUrlForSlug(env.storeUrl, agency.slug, "/checkout/success")}?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: storeUrlForSlug(env.storeUrl, agency.slug, "/cart"),
-      line_items: lineItems.map((item) => ({
-        quantity: item.quantity,
-        price_data: {
-          currency: "usd",
-          unit_amount: item.unitPriceCents,
-          product_data: {
-            name: item.product.name,
-            images: Array.isArray(item.product.images)
-              ? item.product.images.filter((image: unknown) => typeof image === "string")
-              : [],
-          },
-        },
-      })),
-      metadata: {
-        agencyId: agency.id,
-        agencySlug: agency.slug,
-        customerName: body.customerName,
-        customerEmail: body.customerEmail,
-        customerPhone: body.customerPhone ?? "",
-        shippingAddress: body.shippingAddress,
-        items: JSON.stringify(
-          lineItems.map((item) => ({
-            productId: item.product.id,
-            name: item.product.name,
-            quantity: item.quantity,
-            unitPriceCents: item.unitPriceCents,
-            imageUrl: Array.isArray(item.product.images) ? item.product.images[0] : null,
-          }))
-        ),
-        subtotalCents: String(subtotal),
-      },
-    });
-
-    res.json({ checkoutUrl: session.url, sessionId: session.id });
+    res.json({ checkoutUrl: checkout.checkoutUrl, sessionId: checkout.sessionId });
   })
 );
 
