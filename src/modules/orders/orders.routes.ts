@@ -134,14 +134,31 @@ router.get(
   })
 );
 
-router.use(resolveTenant, requireAuth("agency_admin"), requireAgencyMatch);
+router.use(resolveTenant, requireAuth("agency_admin", "super_admin"), requireAgencyMatch);
 
 router.get(
   "/",
   asyncHandler(async (req, res) => {
     const status = req.query.status?.toString();
+    const q = req.query.q?.toString().trim();
+    const from = req.query.from?.toString();
+    const to = req.query.to?.toString();
     const query = db("orders").where({ agency_id: req.agency!.id }).orderBy("created_at", "desc");
     if (status) query.andWhere({ status });
+    if (from) query.andWhere("created_at", ">=", new Date(from));
+    if (to) {
+      const end = new Date(to);
+      end.setHours(23, 59, 59, 999);
+      query.andWhere("created_at", "<=", end);
+    }
+    if (q) {
+      query.andWhere((builder) => {
+        builder
+          .whereILike("invoice_number", `%${q}%`)
+          .orWhereILike("customer_name", `%${q}%`)
+          .orWhereILike("customer_email", `%${q}%`);
+      });
+    }
     const orders = await query;
     const withItems = await Promise.all(
       orders.map(async (order) => ({
