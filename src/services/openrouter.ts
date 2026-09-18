@@ -27,7 +27,7 @@ export async function openRouterChat(messages: ChatMessage[], json = false): Pro
       "X-Title": "CS Ecommerce",
     },
     body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
+      model: "openrouter/free",
       temperature: json ? 0.2 : 0.4,
       messages,
       ...(json ? { response_format: { type: "json_object" } } : {}),
