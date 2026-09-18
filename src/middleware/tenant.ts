@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import { env } from "../config/env";
 import { db } from "../db/knex";
 import { HttpError } from "../utils/http";
 import { agencySlugFromHost } from "../utils/tenant";
@@ -10,14 +11,14 @@ function slugFromRequest(req: Request) {
   const origin = req.header("origin") || req.header("referer") || "";
   if (origin) {
     try {
-      const fromOrigin = agencySlugFromHost(new URL(origin).host);
+      const fromOrigin = agencySlugFromHost(new URL(origin).host, env.storeHost);
       if (fromOrigin) return fromOrigin;
     } catch {
       // ignore invalid origin
     }
   }
 
-  const fromHost = agencySlugFromHost(req.header("host") || "");
+  const fromHost = agencySlugFromHost(req.header("host") || "", env.storeHost);
   if (fromHost) return fromHost;
 
   return (req.query.agency || "").toString().trim();
