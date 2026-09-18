@@ -16,6 +16,7 @@ import {
   adminDashboardRouter,
   superDashboardRouter,
 } from "./modules/dashboard/dashboard.routes";
+import { HttpError } from "./utils/http";
 
 export const app = express();
 
@@ -23,10 +24,20 @@ function isAllowedOrigin(origin?: string) {
   if (!origin) return true;
   try {
     const url = new URL(origin);
-    if (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname.endsWith(".localhost")) {
+    const host = url.hostname;
+
+    // Local development only: any localhost origin, including tenant subdomains.
+    if (!env.isProduction && (host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost"))) {
       return true;
     }
-    return origin === env.storeUrl || origin === env.superAdminUrl;
+
+    // The storefront apex and every tenant subdomain of it, e.g. https://lumina.yourdomain.com
+    const store = new URL(env.storeUrl);
+    if (url.protocol === store.protocol && (host === store.hostname || host.endsWith(`.${store.hostname}`))) {
+      return true;
+    }
+
+    return origin === env.superAdminUrl;
   } catch {
     return false;
   }
@@ -39,7 +50,7 @@ app.use(
         callback(null, true);
         return;
       }
-      callback(new Error("Not allowed by CORS"));
+      callback(new HttpError(403, "Origin not allowed by CORS"));
     },
     credentials: true,
   })
