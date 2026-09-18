@@ -19,6 +19,7 @@ declare global {
         phone: string | null;
         address: string | null;
         tagline: string | null;
+        landing_template: string;
         status: string;
       };
     }

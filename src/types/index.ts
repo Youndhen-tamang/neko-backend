@@ -1,5 +1,9 @@
 export type Role = "super_admin" | "agency_admin";
 
+export const LANDING_TEMPLATES = ["atelier", "boutique", "marketplace"] as const;
+export type LandingTemplate = (typeof LANDING_TEMPLATES)[number];
+export const DEFAULT_LANDING_TEMPLATE: LandingTemplate = "atelier";
+
 export type OrderStatus =
   | "lead"
   | "ordered"
@@ -26,6 +30,7 @@ export type Agency = {
   phone: string | null;
   address: string | null;
   tagline: string | null;
+  landing_template: LandingTemplate;
   status: string;
 };
 

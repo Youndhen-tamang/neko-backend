@@ -217,6 +217,7 @@ export async function seed(knex: Knex): Promise<void> {
     phone: "+1 212 555 0148",
     address: "184 Mercer Street, New York, NY 10012",
     tagline: "Elevated essentials for modern women",
+    landing_template: "atelier",
     status: "active",
   });
 

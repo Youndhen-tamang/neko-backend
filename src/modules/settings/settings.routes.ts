@@ -6,6 +6,7 @@ import { db } from "../../db/knex";
 import { requireAuth } from "../../middleware/auth";
 import { requireAgencyMatch, resolveTenant } from "../../middleware/tenant";
 import { uploadImage } from "../../services/cloudinary";
+import { DEFAULT_LANDING_TEMPLATE, LANDING_TEMPLATES } from "../../types";
 import { asyncHandler, HttpError } from "../../utils/http";
 
 const upload = multer({
@@ -28,6 +29,7 @@ router.get(
         logoUrl: agency.logo_url,
         primaryColor: agency.primary_color,
         tagline: agency.tagline,
+        landingTemplate: agency.landing_template || DEFAULT_LANDING_TEMPLATE,
         email: agency.email,
         phone: agency.phone,
         address: agency.address,
@@ -53,6 +55,7 @@ router.patch(
         brandName: z.string().min(2).optional(),
         tagline: z.string().optional(),
         primaryColor: z.string().optional(),
+        landingTemplate: z.enum(LANDING_TEMPLATES).optional(),
         email: z
           .string()
           .optional()
@@ -67,6 +70,7 @@ router.patch(
     if (body.brandName) updates.brand_name = body.brandName;
     if (body.tagline !== undefined) updates.tagline = body.tagline;
     if (body.primaryColor) updates.primary_color = body.primaryColor;
+    if (body.landingTemplate) updates.landing_template = body.landingTemplate;
     if (body.email !== undefined) updates.email = body.email;
     if (body.phone !== undefined) updates.phone = body.phone;
     if (body.address !== undefined) updates.address = body.address;
