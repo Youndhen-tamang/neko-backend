@@ -39,6 +39,7 @@ export async function generateTryOn(input: {
   agency: Agency;
   product: { id: string; name: string; description: string | null; category: string | null; images: unknown };
   personBuffer: Buffer;
+  personMime?: string;
   heightCm: number;
   weightKg: number;
   channel?: string;
@@ -69,16 +70,32 @@ export async function generateTryOn(input: {
     model: env.tryon.model,
   });
 
-  const prompt = `Show the person from the first image wearing the garment from the second image: "${
+  const prompt = `Virtual try-on. Edit the customer photograph only.
+
+Keep the same person from the customer photo: same face, hair, skin tone, body, pose, shoes if visible, and background. Do not replace them with the model from the product photo. Do not copy the product photo's studio, chair, lighting, or composition.
+
+Take only the garment from the product photo and dress the customer in it. Match that garment's colour, fabric, neckline, sleeves, cut, and length. The catalog name is "${
     input.product.name
-  }"${input.product.category ? ` (${input.product.category})` : ""}. Keep their face, hair, skin tone, body shape, and pose realistic and unchanged. Replace only their clothing with the product, matching its colour, fabric, cut, and length faithfully. Natural lighting, photorealistic. The person is about ${Math.round(
-    input.heightCm
-  )} cm tall and ${Math.round(input.weightKg)} kg; drape and fit the garment realistically for that build. Output only the image.`;
+  }"${input.product.category ? ` (${input.product.category})` : ""} — use it as a label, not as a reason to invent a different outfit.
+
+The customer is about ${Math.round(input.heightCm)} cm and ${Math.round(
+    input.weightKg
+  )} kg; drape the garment realistically for that build. Photorealistic. Output a single edited photo of the customer wearing the garment.`;
 
   try {
     const generated = await openRouterGenerateImage({
       prompt,
-      imageUrls: [inputPhotoUrl, ...productImages],
+      images: [
+        {
+          buffer: input.personBuffer,
+          mime: input.personMime,
+          label: "CUSTOMER PHOTO — this is the person to keep. Edit this image.",
+        },
+        ...productImages.map((url) => ({
+          url,
+          label: "PRODUCT PHOTO — extract the garment only. Do not output this person or scene.",
+        })),
+      ],
       aspectRatio: "3:4",
     });
 

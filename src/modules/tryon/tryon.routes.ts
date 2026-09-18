@@ -43,6 +43,7 @@ router.post(
       agency: req.agency!,
       product,
       personBuffer: req.file.buffer,
+      personMime: req.file.mimetype,
       heightCm: body.heightCm,
       weightKg: body.weightKg,
       channel: "web",

@@ -53,7 +53,7 @@ const products: SeedProduct[] = [
       "Tailored crepe sheath with a square neck and back vent. Fully lined, with a discreet center-back zip.",
     category: "Dresses",
     tags: ["classic", "evening", "crepe"],
-    images: [photo("photo-1595777457583-95e059d581b8")],
+    images: [photo("photo-1724303722569-bb89a7ffd753")],
     price_cents: 18800,
     stock: 11,
   },
