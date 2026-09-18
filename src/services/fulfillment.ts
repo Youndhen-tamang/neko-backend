@@ -2,6 +2,7 @@ import { db } from "../db/knex";
 import { sendInvoiceEmail } from "./email";
 import { createNotification } from "./notifications";
 import { getStripe } from "./stripe";
+import { notifyWhatsAppOrderPaid } from "./whatsapp-inbound";
 
 function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
@@ -115,6 +116,23 @@ export async function fulfillStripeSession(sessionId: string) {
     }
   } catch (error) {
     console.error("Failed to send invoice email", error);
+  }
+
+  if (session.metadata.channel === "whatsapp" && session.metadata.waUser) {
+    try {
+      const lines = items
+        .map((item) => `- ${item.name} × ${item.quantity} — ${money(item.unitPriceCents * item.quantity)}`)
+        .join("\n");
+      await notifyWhatsAppOrderPaid({
+        agencyId: agency.id,
+        waUser: session.metadata.waUser,
+        text: `Thank you for the purchase, ma'am. Your order is confirmed.\n\nInvoice: ${invoiceNumber}\n${lines}\nTotal: ${money(
+          totalCents
+        )}\nShip to: ${session.metadata.shippingAddress}\n\nA confirmation email is on the way.`,
+      });
+    } catch (error) {
+      console.error("Failed to send WhatsApp order confirmation", error);
+    }
   }
 
   return order;

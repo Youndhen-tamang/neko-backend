@@ -164,8 +164,8 @@ router.post(
         name: body.name,
         description: body.description ?? "",
         category: body.category ?? "General",
-        tags: body.tags ?? [],
-        images: body.images,
+        tags: JSON.stringify(body.tags ?? []),
+        images: JSON.stringify(body.images),
         price_cents: body.priceCents,
         stock: body.stock,
         low_stock_threshold: body.lowStockThreshold ?? 5,
@@ -222,8 +222,8 @@ router.patch(
     if (body.name) updates.name = body.name;
     if (body.description !== undefined) updates.description = body.description;
     if (body.category !== undefined) updates.category = body.category;
-    if (body.tags !== undefined) updates.tags = body.tags;
-    if (body.images !== undefined) updates.images = body.images;
+    if (body.tags !== undefined) updates.tags = JSON.stringify(body.tags);
+    if (body.images !== undefined) updates.images = JSON.stringify(body.images);
     if (body.priceCents !== undefined) updates.price_cents = body.priceCents;
     if (body.stock !== undefined) updates.stock = body.stock;
     if (body.lowStockThreshold !== undefined) updates.low_stock_threshold = body.lowStockThreshold;

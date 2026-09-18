@@ -67,7 +67,22 @@ router.get(
     const admin = await db("users")
       .where({ agency_id: agency.id, role: "agency_admin" })
       .first();
-    res.json({ agency: { ...agency, adminEmail: admin?.email, adminName: admin?.name } });
+    const whatsapp = await db("agency_integrations")
+      .where({ agency_id: agency.id, provider: "whatsapp" })
+      .first();
+    res.json({
+      agency: {
+        ...agency,
+        adminEmail: admin?.email,
+        adminName: admin?.name,
+        whatsapp: {
+          enabled: Boolean(whatsapp?.enabled),
+          phoneNumberId: whatsapp?.phone_number_id ?? null,
+          displayPhone: whatsapp?.display_phone ?? null,
+          hasAccessToken: Boolean(whatsapp?.access_token_enc),
+        },
+      },
+    });
   })
 );
 

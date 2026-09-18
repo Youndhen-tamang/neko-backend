@@ -11,6 +11,7 @@ import chatbotRoutes from "./modules/chatbot/chatbot.routes";
 import notificationsRoutes from "./modules/notifications/notifications.routes";
 import settingsRoutes from "./modules/settings/settings.routes";
 import webhooksRoutes from "./modules/webhooks/webhooks.routes";
+import tryonRoutes from "./modules/tryon/tryon.routes";
 import {
   adminDashboardRouter,
   superDashboardRouter,
@@ -60,5 +61,6 @@ app.use("/api/orders", ordersRoutes);
 app.use("/api/chat", chatbotRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/settings", settingsRoutes);
+app.use("/api/tryon", tryonRoutes);
 app.use("/api/admin/dashboard", adminDashboardRouter);
 app.use(errorHandler);

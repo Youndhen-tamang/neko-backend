@@ -1,7 +1,9 @@
 import { z } from "zod";
+import { env } from "../config/env";
 import { db } from "../db/knex";
 import { Agency } from "../types";
 import { HttpError } from "../utils/http";
+import { storeUrlForSlug } from "../utils/tenant";
 import { createCheckoutSession } from "./checkout";
 import { fulfillStripeSession } from "./fulfillment";
 import { openRouterChat } from "./openrouter";
@@ -18,11 +20,23 @@ export type ChatOrderSummary = {
   items: { name: string; quantity: number; unit_price_cents: number }[];
 };
 
+export type ChatChannel = "web" | "whatsapp";
+
+export type ChatProductLink = {
+  id: string;
+  name: string;
+  price_cents: number;
+  url: string;
+  tryOnUrl: string;
+};
+
 export type ChatResult = {
   answer: string;
   checkoutUrl?: string;
   checkoutSessionId?: string;
   order?: ChatOrderSummary;
+  /** Catalog products the assistant recommended or the customer asked about. */
+  products?: ChatProductLink[];
 };
 
 const checkoutActionSchema = z.object({
@@ -50,11 +64,18 @@ type CatalogProduct = {
   stock: number;
 };
 
-function money(cents: number) {
+export function money(cents: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
-function parseModelJson(content: string): { reply: string; checkout: unknown } {
+export function productLinks(agency: Agency, product: { id: string }) {
+  return {
+    url: storeUrlForSlug(env.storeUrl, agency.slug, `/products/${product.id}`),
+    tryOnUrl: storeUrlForSlug(env.storeUrl, agency.slug, `/try-on?product=${product.id}`),
+  };
+}
+
+function parseModelJson(content: string): { reply: string; checkout: unknown; products: string[] } {
   const trimmed = content
     .trim()
     .replace(/^```json\s*/i, "")
@@ -64,19 +85,24 @@ function parseModelJson(content: string): { reply: string; checkout: unknown } {
   const start = trimmed.indexOf("{");
   const end = trimmed.lastIndexOf("}");
   if (start < 0 || end <= start) {
-    return { reply: content.trim(), checkout: null };
+    return { reply: content.trim(), checkout: null, products: [] };
   }
   try {
     const parsed = JSON.parse(trimmed.slice(start, end + 1)) as {
       reply?: string;
       checkout?: unknown;
+      products?: unknown;
     };
+    const products = Array.isArray(parsed.products)
+      ? parsed.products.filter((id): id is string => typeof id === "string")
+      : [];
     return {
       reply: parsed.reply?.trim() || content.trim(),
       checkout: parsed.checkout ?? null,
+      products,
     };
   } catch {
-    return { reply: content.trim(), checkout: null };
+    return { reply: content.trim(), checkout: null, products: [] };
   }
 }
 
@@ -126,7 +152,7 @@ ${formatOrderDetails(order)}
 A confirmation email is on the way.`.trim();
 }
 
-function formatOrderDetails(order: ChatOrderSummary) {
+export function formatOrderDetails(order: ChatOrderSummary) {
   const lines = order.items
     .map((item) => `- ${item.name} × ${item.quantity} — ${money(item.unit_price_cents * item.quantity)}`)
     .join("\n");
@@ -199,8 +225,14 @@ export async function handleStoreChat(options: {
   message?: string;
   history?: ChatTurn[];
   checkoutSessionId?: string;
+  /** Public URL of a photo the customer sent (WhatsApp media re-hosted on Cloudinary). */
+  imageUrl?: string;
+  channel?: ChatChannel;
+  /** Extra Stripe metadata, e.g. the WhatsApp number to notify after payment. */
+  checkoutMetadata?: Record<string, string>;
 }): Promise<ChatResult> {
-  const { agency, message, history = [], checkoutSessionId } = options;
+  const { agency, message, history = [], checkoutSessionId, imageUrl, checkoutMetadata } = options;
+  const channel: ChatChannel = options.channel ?? "web";
 
   if (checkoutSessionId) {
     const paid = await thankIfPaid(agency, checkoutSessionId);
@@ -213,11 +245,11 @@ export async function handleStoreChat(options: {
     }
   }
 
-  if (!message?.trim()) {
+  if (!message?.trim() && !imageUrl) {
     throw new HttpError(400, "Message is required");
   }
 
-  const invoiceLookup = await lookupInvoices(agency, message);
+  const invoiceLookup = message ? await lookupInvoices(agency, message) : null;
   if (invoiceLookup) return invoiceLookup;
 
   const products = (await db("products")
@@ -233,6 +265,23 @@ export async function handleStoreChat(options: {
     )
     .join("\n");
 
+  const paymentRule =
+    channel === "whatsapp"
+      ? "4. Never invent payment URLs and never put URLs in reply text. The backend creates the Stripe link and appends it to your message."
+      : "4. Never invent payment URLs and never put URLs in reply text. The backend creates the Stripe link and the UI shows a Pay button.";
+
+  const photoRule = imageUrl
+    ? `
+The customer sent a photo. Look at it carefully and identify the closest matching catalog products by garment type, colour, pattern, and style. Put their ids in "products", briefly say why they match, and mention they can see it on themselves with the try-on page. If nothing in the catalog is close, say so honestly and suggest the nearest alternatives.`
+    : "";
+
+  const userContent: unknown = imageUrl
+    ? [
+        { type: "text", text: message?.trim() || "Which of your products look like this?" },
+        { type: "image_url", image_url: { url: imageUrl } },
+      ]
+    : message;
+
   const raw = await openRouterChat(
     [
       {
@@ -244,24 +293,28 @@ You can only sell products from this live catalog. Never invent products, prices
 Live catalog:
 ${catalog || "No published products yet."}
 
+The store has a virtual try-on page where a customer uploads a full-body photo, enters height and weight, and sees how a product looks on them. When a customer wants to see how something looks or fits on them, tell them about it and include that product id in "products"; the backend attaches the link.
+${photoRule}
+
 Sales flow:
 1. Help the customer pick a product and quantity from the catalog.
 2. Then collect checkout details one or two at a time if needed: full name, email, phone (optional), and shipping address.
 3. When you have a valid in-stock product, quantity, full name, email, and shipping address, set "checkout" to that order. Otherwise checkout must be null.
-4. Never invent payment URLs and never put URLs in reply text. The backend creates the Stripe link and the UI shows a Pay button.
+${paymentRule}
 5. If the customer asks about an order or invoice but has not given an invoice number, ask them to paste it (for example INV-LUMINA-1001). Do not invent order details.
 6. Do not emit checkout again unless the customer changes the order.
+7. "products" lists up to 5 catalog ids you recommended or the customer asked about in this turn (empty array if none). The backend renders links for them, so never write product URLs yourself.
 
 Return JSON only:
-{"reply":"message for the customer","checkout":null}
+{"reply":"message for the customer","checkout":null,"products":["<catalog uuid>"]}
 or
-{"reply":"I've prepared your payment link.","checkout":{"customerName":"...","customerEmail":"...","customerPhone":"...","shippingAddress":"...","items":[{"productId":"<catalog uuid>","productName":"<exact catalog name>","quantity":1}]}}`,
+{"reply":"I've prepared your payment link.","checkout":{"customerName":"...","customerEmail":"...","customerPhone":"...","shippingAddress":"...","items":[{"productId":"<catalog uuid>","productName":"<exact catalog name>","quantity":1}]},"products":[]}`,
       },
       ...history.slice(-10).map((item) => ({
         role: item.role,
         content: item.content,
       })),
-      { role: "user", content: message },
+      { role: "user", content: userContent },
     ],
     true
   );
@@ -270,6 +323,21 @@ or
   let answer = parsed.reply;
   let checkoutUrl: string | undefined;
   let sessionId: string | undefined;
+
+  const seen = new Set<string>();
+  const recommended: ChatProductLink[] = [];
+  for (const id of parsed.products) {
+    if (seen.has(id) || recommended.length >= 5) continue;
+    const product = products.find((row) => row.id === id);
+    if (!product) continue;
+    seen.add(id);
+    recommended.push({
+      id: product.id,
+      name: product.name,
+      price_cents: product.price_cents,
+      ...productLinks(agency, product),
+    });
+  }
 
   if (parsed.checkout) {
     const action = checkoutActionSchema.safeParse(parsed.checkout);
@@ -304,16 +372,19 @@ or
             shippingAddress: action.data.shippingAddress,
             items: resolvedItems,
             cancelPath: "/",
-            successQuery: "from=chat",
+            successQuery: channel === "whatsapp" ? "from=whatsapp" : "from=chat",
+            metadata: { channel, ...(checkoutMetadata ?? {}) },
           });
           checkoutUrl = checkout.checkoutUrl;
           sessionId = checkout.sessionId;
           const summary = checkout.lineItems
             .map((item) => `${item.name} × ${item.quantity} (${money(item.unitPriceCents * item.quantity)})`)
             .join(", ");
+          const payHint =
+            channel === "whatsapp" ? "Tap the link below to pay securely." : "Use the button below to pay securely.";
           answer = `${answer}\n\nYour payment link for ${summary} is ready. Total ${money(
             checkout.subtotal
-          )}. Use the button below to pay securely.`.trim();
+          )}. ${payHint}`.trim();
         } catch (error) {
           const reason = error instanceof HttpError ? error.message : "I couldn't create the payment link just now.";
           answer = `${answer}\n\n${reason}`.trim();
@@ -326,5 +397,6 @@ or
     answer,
     checkoutUrl,
     checkoutSessionId: sessionId ?? checkoutSessionId,
+    products: recommended,
   };
 }
