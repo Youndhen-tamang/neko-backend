@@ -35,12 +35,6 @@ function imageList(value: unknown): string[] {
   return [];
 }
 
-function dataUrlToBuffer(dataUrl: string): Buffer {
-  const comma = dataUrl.indexOf(",");
-  const base64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-  return Buffer.from(base64, "base64");
-}
-
 export async function generateTryOn(input: {
   agency: Agency;
   product: { id: string; name: string; description: string | null; category: string | null; images: unknown };
@@ -75,26 +69,21 @@ export async function generateTryOn(input: {
     model: env.tryon.model,
   });
 
-  const prompt = `Create one photorealistic image of the person in the first photo wearing the garment shown in the product photo(s): "${
+  const prompt = `Show the person from the first image wearing the garment from the second image: "${
     input.product.name
-  }"${input.product.category ? ` (${input.product.category})` : ""}. Keep the person's face, hair, skin tone, body shape, pose, background, and lighting exactly as in their photo. Replace only their clothing with the product, matching its colour, fabric, cut, and length faithfully. The person is about ${Math.round(
+  }"${input.product.category ? ` (${input.product.category})` : ""}. Keep their face, hair, skin tone, body shape, and pose realistic and unchanged. Replace only their clothing with the product, matching its colour, fabric, cut, and length faithfully. Natural lighting, photorealistic. The person is about ${Math.round(
     input.heightCm
-  )} cm tall and ${Math.round(input.weightKg)} kg; drape and fit the garment realistically for that build. Output only the image, no text.`;
+  )} cm tall and ${Math.round(input.weightKg)} kg; drape and fit the garment realistically for that build. Output only the image.`;
 
   try {
-    const generated = await openRouterGenerateImage([
-      {
-        role: "user",
-        content: [
-          { type: "text", text: prompt },
-          { type: "image_url", image_url: { url: inputPhotoUrl } },
-          ...productImages.map((url) => ({ type: "image_url", image_url: { url } })),
-        ],
-      },
-    ]);
+    const generated = await openRouterGenerateImage({
+      prompt,
+      imageUrls: [inputPhotoUrl, ...productImages],
+      aspectRatio: "3:4",
+    });
 
     const resultUrl = await uploadImage(
-      dataUrlToBuffer(generated.imageDataUrl),
+      generated.imageBuffer,
       `agencies/${input.agency.id}/tryon/results`
     );
 

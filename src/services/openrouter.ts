@@ -14,13 +14,14 @@ export type ProductDraft = {
 };
 
 const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
+const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
-async function openRouterRequest(body: Record<string, unknown>, timeoutMs: number) {
+async function openRouterRequest(path: string, body: Record<string, unknown>, timeoutMs: number) {
   if (!env.openRouterKey) {
     throw new HttpError(500, "OPENROUTER_API_KEY is not configured");
   }
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const response = await fetch(`${OPENROUTER_BASE}${path}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.openRouterKey}`,
@@ -46,6 +47,7 @@ export async function openRouterChat(
   opts: { model?: string } = {}
 ): Promise<string> {
   const data = (await openRouterRequest(
+    "/chat/completions",
     {
       model: opts.model ?? DEFAULT_MODEL,
       temperature: json ? 0.2 : 0.4,
@@ -58,29 +60,48 @@ export async function openRouterChat(
 }
 
 /**
- * Image-output request. OpenRouter returns generated images as base64 data URLs
- * under message.images[] when `modalities` includes "image".
+ * Dedicated Image API. Pass public image URLs as `input_references`; OpenRouter
+ * returns the generated image as base64 in `data[0].b64_json`.
  */
-export async function openRouterGenerateImage(
-  messages: ChatMessage[],
-  opts: { model?: string } = {}
-): Promise<{ imageDataUrl: string; text: string; model: string }> {
+export async function openRouterGenerateImage(opts: {
+  prompt: string;
+  imageUrls: string[];
+  model?: string;
+  aspectRatio?: string;
+}): Promise<{ imageBuffer: Buffer; mediaType: string; model: string }> {
   const model = opts.model ?? env.tryon.model;
-  const data = (await openRouterRequest({ model, messages, modalities: ["image", "text"] }, 120_000)) as {
-    choices?: {
-      message?: {
-        content?: string;
-        images?: { type?: string; image_url?: { url?: string } }[];
-      };
-    }[];
+  const imageUrls = opts.imageUrls.filter(Boolean).slice(0, 3);
+  if (!imageUrls.length) {
+    throw new HttpError(400, "At least one reference image is required");
+  }
+
+  const data = (await openRouterRequest(
+    "/images",
+    {
+      model,
+      prompt: opts.prompt,
+      n: 1,
+      ...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
+      input_references: imageUrls.map((url) => ({
+        type: "image_url",
+        image_url: { url },
+      })),
+    },
+    180_000
+  )) as {
+    data?: { b64_json?: string; media_type?: string }[];
   };
 
-  const message = data.choices?.[0]?.message;
-  const imageDataUrl = message?.images?.[0]?.image_url?.url;
-  if (!imageDataUrl) {
+  const image = data.data?.[0];
+  if (!image?.b64_json) {
     throw new HttpError(502, "The image model did not return an image");
   }
-  return { imageDataUrl, text: message?.content ?? "", model };
+
+  return {
+    imageBuffer: Buffer.from(image.b64_json, "base64"),
+    mediaType: image.media_type || "image/png",
+    model,
+  };
 }
 
 export async function draftProductFromImage(imageUrl: string): Promise<ProductDraft> {
