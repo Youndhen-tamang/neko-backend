@@ -3,6 +3,7 @@ import type { Knex } from "knex";
 import { db } from "../../db/knex";
 import { requireAuth } from "../../middleware/auth";
 import { requireAgencyMatch, resolveTenant } from "../../middleware/tenant";
+import { engagementStats } from "../../services/engagement";
 import { asyncHandler } from "../../utils/http";
 
 const PAID_STATUSES = ["ordered", "dispatched", "delivered"];
@@ -235,6 +236,7 @@ adminRouter.get(
       .where({ agency_id: agencyId, read: false })
       .count("id as count")
       .first();
+    const engagement = await engagementStats(agencyId);
 
     res.json({
       stats: {
@@ -242,6 +244,8 @@ adminRouter.get(
         orderCount: Number(orderCount),
         revenueCents: Number(revenue ?? 0),
         unreadNotifications: Number(unread?.count ?? 0),
+        likeCount: engagement.likeCount,
+        commentCount: engagement.commentCount,
         lowStock,
         recentOrders,
       },
@@ -289,12 +293,15 @@ superRouter.get(
       .whereNotIn("status", ["lead", "cancelled"])
       .sum("total_cents as sum");
     const agencies = await db("agencies").orderBy("created_at", "desc").limit(8);
+    const engagement = await engagementStats();
 
     res.json({
       stats: {
         agencyCount: Number(agencyCount),
         orderCount: Number(orderCount),
         revenueCents: Number(revenue ?? 0),
+        likeCount: engagement.likeCount,
+        commentCount: engagement.commentCount,
         recentAgencies: agencies,
       },
     });

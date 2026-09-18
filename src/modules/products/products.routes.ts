@@ -6,6 +6,7 @@ import { db } from "../../db/knex";
 import { requireAuth } from "../../middleware/auth";
 import { requireAgencyMatch, resolveTenant } from "../../middleware/tenant";
 import { uploadImage } from "../../services/cloudinary";
+import { engagementCountSelects } from "../../services/engagement";
 import { draftProductFromImage } from "../../services/openrouter";
 import { asyncHandler, HttpError } from "../../utils/http";
 
@@ -60,7 +61,12 @@ router.use(requireProductAccess);
 
 function scopedProducts(req: Request) {
   const query = db("products")
-    .select("products.*", "agencies.name as agency_name", "agencies.slug as agency_slug")
+    .select(
+      "products.*",
+      "agencies.name as agency_name",
+      "agencies.slug as agency_slug",
+      ...engagementCountSelects()
+    )
     .leftJoin("agencies", "agencies.id", "products.agency_id");
 
   if (req.user?.role === "agency_admin") {
@@ -176,7 +182,12 @@ router.get(
   "/:id",
   asyncHandler(async (req, res) => {
     const query = db("products")
-      .select("products.*", "agencies.name as agency_name", "agencies.slug as agency_slug")
+      .select(
+        "products.*",
+        "agencies.name as agency_name",
+        "agencies.slug as agency_slug",
+        ...engagementCountSelects()
+      )
       .leftJoin("agencies", "agencies.id", "products.agency_id")
       .where("products.id", req.params.id);
 
