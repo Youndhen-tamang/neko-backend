@@ -328,6 +328,9 @@ async function orderWithItems(orderId: string): Promise<PlacedOrder | null> {
 }
 
 const ESEWA_FINAL_FAILURES = ["CANCELED", "NOT_FOUND", "FULL_REFUND", "PARTIAL_REFUND", "AMBIGUOUS"];
+const ESEWA_PROCESSING_STALE_MS = 60_000;
+const ESEWA_WAIT_ATTEMPTS = 24;
+const ESEWA_WAIT_INTERVAL_MS = 500;
 
 /**
  * Confirms the payment with eSewa's status API and places the order exactly once.
@@ -351,13 +354,26 @@ export async function fulfillEsewaPayment(transactionUuid: string, agencyId: str
   }
 
   // Claim the row so two concurrent verify calls cannot both place an order.
+  // A row left in "processing" for over a minute (server restarted mid-order) is reclaimable.
+  const staleBefore = new Date(Date.now() - ESEWA_PROCESSING_STALE_MS);
   const claimed = await db("esewa_payments")
     .where({ id: transactionUuid })
-    .whereIn("status", ["pending", "failed"])
+    .where((qb) =>
+      qb
+        .whereIn("status", ["pending", "failed"])
+        .orWhere((stale) => stale.where({ status: "processing" }).andWhere("updated_at", "<", staleBefore))
+    )
     .update({ status: "processing", updated_at: new Date() });
+
   if (!claimed) {
-    const again = await db("esewa_payments").where({ id: transactionUuid }).first();
-    if (again?.order_id) return orderWithItems(again.order_id);
+    // Another request is placing this order right now (React double-mount, a refresh).
+    // Wait for it to finish and hand back the same order instead of failing.
+    for (let attempt = 0; attempt < ESEWA_WAIT_ATTEMPTS; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, ESEWA_WAIT_INTERVAL_MS));
+      const again = await db("esewa_payments").where({ id: transactionUuid }).first();
+      if (again?.order_id) return orderWithItems(again.order_id);
+      if (again?.status !== "processing") break;
+    }
     throw new HttpError(409, "Payment is still being confirmed. Please refresh in a moment.");
   }
 
