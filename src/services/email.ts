@@ -1,5 +1,6 @@
 import nodemailer, { type Transporter } from "nodemailer";
 import { env } from "../config/env";
+import { money } from "../utils/money";
 
 type SendEmailOptions = {
   to: string | string[];
@@ -60,11 +61,33 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
   return true;
 }
 
-function money(cents: number, currency: string) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: currency.toUpperCase(),
-  }).format(cents / 100);
+export async function sendPasswordResetEmail(payload: {
+  to: string;
+  name: string;
+  agencyName: string;
+  resetUrl: string;
+}): Promise<boolean> {
+  const html = `
+    <div style="font-family:Georgia,serif;max-width:640px;margin:0 auto;color:#1a1a1a">
+      <h1 style="font-size:22px;margin:0 0 16px">${payload.agencyName}</h1>
+      <p>Hi ${payload.name},</p>
+      <p>We received a request to reset the admin password for ${payload.agencyName}.</p>
+      <p style="margin:24px 0">
+        <a href="${payload.resetUrl}" style="display:inline-block;padding:12px 18px;background:#1f6b4a;color:#fff;text-decoration:none;border-radius:8px">
+          Choose a new password
+        </a>
+      </p>
+      <p style="color:#555;font-size:14px">This link expires in 1 hour. If you did not ask for a reset, you can ignore this email.</p>
+    </div>
+  `;
+
+  return sendEmail({
+    from: `"${payload.agencyName}" <${env.smtp.user}>`,
+    to: payload.to,
+    subject: `Reset your ${payload.agencyName} admin password`,
+    html,
+    text: `Hi ${payload.name}, reset your ${payload.agencyName} admin password: ${payload.resetUrl} (expires in 1 hour).`,
+  });
 }
 
 export async function sendInvoiceEmail(payload: InvoiceEmail): Promise<boolean> {

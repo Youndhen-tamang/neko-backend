@@ -4,6 +4,7 @@ import { Agency } from "../types";
 import { HttpError } from "../utils/http";
 import { storeUrlForSlug } from "../utils/tenant";
 import { getStripe } from "./stripe";
+import { STORE_CURRENCY } from "../utils/money";
 
 export type CheckoutItemInput = {
   productId: string;
@@ -64,7 +65,7 @@ export async function createCheckoutSession(input: CreateCheckoutInput) {
     line_items: lineItems.map((item) => ({
       quantity: item.quantity,
       price_data: {
-        currency: "usd",
+        currency: STORE_CURRENCY,
         unit_amount: item.unitPriceCents,
         product_data: {
           name: item.product.name,

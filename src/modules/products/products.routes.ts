@@ -167,6 +167,7 @@ router.post(
         tags: JSON.stringify(body.tags ?? []),
         images: JSON.stringify(body.images),
         price_cents: body.priceCents,
+        currency: "npr",
         stock: body.stock,
         low_stock_threshold: body.lowStockThreshold ?? 5,
         status: body.status,

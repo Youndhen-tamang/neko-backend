@@ -8,6 +8,7 @@ import { createCheckoutSession } from "./checkout";
 import { createCodOrder, fulfillStripeSession } from "./fulfillment";
 import { openRouterChat } from "./openrouter";
 import { sizeHint } from "./tryon";
+import { money } from "../utils/money";
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
@@ -197,9 +198,7 @@ type CatalogProduct = {
   stock: number;
 };
 
-export function money(cents: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
-}
+export { money };
 
 export function productLinks(agency: Agency, product: { id: string }) {
   return {
@@ -829,7 +828,7 @@ If the customer typos an email, product name, number, or confirmation, silently 
 Live catalog (use only when they ask about products, stock, or ordering):
 ${catalog || "No published products yet."}
 
-When they want to shop or you recommend pieces, number them starting at 1 ("Say 1 for the silk slip, $148") and describe colour, cut, length, fabric or feel, and occasion in one or two sentences. If the customer answers with a number, pick that catalog row.
+When they want to shop or you recommend pieces, number them starting at 1 ("Say 1 for the silk slip, NPR 148") and describe colour, cut, length, fabric or feel, and occasion in one or two sentences. If the customer answers with a number, pick that catalog row. Always quote prices in Nepalese rupees (NPR), never USD or dollars.
 
 The store has a virtual try-on page. Mention it only if they want to see a look on themselves. If they give height in cm and weight in kg, you may mention a rough size (XS–XL) as a guide, not a guarantee.
 ${photoRule}

@@ -5,12 +5,7 @@ import { sendInvoiceEmail } from "./email";
 import { createNotification } from "./notifications";
 import { getStripe } from "./stripe";
 import { notifyWhatsAppOrderPaid } from "./whatsapp-inbound";
-
-function money(cents: number) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(
-    cents / 100
-  );
-}
+import { money, STORE_CURRENCY } from "../utils/money";
 
 function productImages(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((image): image is string => typeof image === "string");
@@ -75,6 +70,7 @@ async function placeAgencyOrder(input: {
     shipping_address: input.shippingAddress,
     subtotal_cents: totalCents,
     total_cents: totalCents,
+    currency: STORE_CURRENCY,
     payment_method: input.paymentMethod,
     stripe_checkout_session_id: input.stripeCheckoutSessionId ?? null,
     stripe_payment_intent_id: input.stripePaymentIntentId ?? null,
@@ -146,7 +142,7 @@ async function placeAgencyOrder(input: {
         unitPriceCents: item.unitPriceCents,
       })),
       totalCents,
-      currency: "usd",
+      currency: STORE_CURRENCY,
     });
     if (sent) {
       await db("orders").where({ id: orderId }).update({ email_sent: true });

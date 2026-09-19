@@ -221,7 +221,7 @@ export async function draftProductFromImage(imageUrl: string): Promise<ProductDr
       {
         role: "system",
         content:
-          "You extract ecommerce product details from a photo. Return JSON only with keys: name, description, category, tags (string array), material, color, suggested_price_range.",
+          "You extract ecommerce product details from a photo. Return JSON only with keys: name, description, category, tags (string array), material, color, suggested_price_range (Nepalese rupees / NPR).",
       },
       {
         role: "user",
