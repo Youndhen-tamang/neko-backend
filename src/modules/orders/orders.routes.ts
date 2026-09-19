@@ -131,8 +131,11 @@ router.get(
     const q = req.query.q?.toString().trim();
     const from = req.query.from?.toString();
     const to = req.query.to?.toString();
+    const unread = req.query.unread?.toString();
     const query = db("orders").where({ agency_id: req.agency!.id }).orderBy("created_at", "desc");
     if (status) query.andWhere({ status });
+    if (unread === "true" || unread === "1") query.andWhere({ read: false });
+    if (unread === "false" || unread === "0") query.andWhere({ read: true });
     if (from) query.andWhere("created_at", ">=", new Date(from));
     if (to) {
       const end = new Date(to);
@@ -154,7 +157,34 @@ router.get(
         items: await db("order_items").where({ order_id: order.id }),
       }))
     );
-    res.json({ orders: withItems });
+    const unreadCount = await db("orders")
+      .where({ agency_id: req.agency!.id, read: false })
+      .count("id as count")
+      .first();
+    res.json({ orders: withItems, unreadCount: Number(unreadCount?.count ?? 0) });
+  })
+);
+
+router.patch(
+  "/:id/read",
+  asyncHandler(async (req, res) => {
+    const [order] = await db("orders")
+      .where({ id: req.params.id, agency_id: req.agency!.id })
+      .update({ read: true, updated_at: new Date() })
+      .returning("*");
+    if (!order) throw new HttpError(404, "Order not found");
+    res.json({ order });
+  })
+);
+
+router.post(
+  "/read-all",
+  asyncHandler(async (req, res) => {
+    await db("orders").where({ agency_id: req.agency!.id, read: false }).update({
+      read: true,
+      updated_at: new Date(),
+    });
+    res.json({ ok: true });
   })
 );
 

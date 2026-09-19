@@ -236,6 +236,10 @@ adminRouter.get(
       .where({ agency_id: agencyId, read: false })
       .count("id as count")
       .first();
+    const unreadOrders = await db("orders")
+      .where({ agency_id: agencyId, read: false })
+      .count("id as count")
+      .first();
     const engagement = await engagementStats(agencyId);
 
     res.json({
@@ -244,6 +248,7 @@ adminRouter.get(
         orderCount: Number(orderCount),
         revenueCents: Number(revenue ?? 0),
         unreadNotifications: Number(unread?.count ?? 0),
+        unreadOrders: Number(unreadOrders?.count ?? 0),
         likeCount: engagement.likeCount,
         commentCount: engagement.commentCount,
         lowStock,
@@ -262,7 +267,17 @@ adminRouter.get(
     const pending = await db("orders")
       .where({ agency_id: req.agency!.id })
       .whereIn("status", ["lead", "ordered"]);
-    res.json({ alerts: { lowStock, pendingOrders: pending } });
+    const unreadOrders = await db("orders")
+      .where({ agency_id: req.agency!.id, read: false })
+      .count("id as count")
+      .first();
+    res.json({
+      alerts: {
+        lowStock,
+        pendingOrders: pending,
+        unreadOrderCount: Number(unreadOrders?.count ?? 0),
+      },
+    });
   })
 );
 
