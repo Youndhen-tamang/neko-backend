@@ -17,6 +17,7 @@ import {
   adminDashboardRouter,
   superDashboardRouter,
 } from "./modules/dashboard/dashboard.routes";
+import tenantRequestsRoutes from "./modules/tenant-requests/tenant-requests.routes";
 import { HttpError } from "./utils/http";
 
 export const app = express();
@@ -65,6 +66,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/tenant-requests", tenantRequestsRoutes);
 app.use("/api/super-admin/agencies", agenciesRoutes);
 app.use("/api/super-admin/dashboard", superDashboardRouter);
 app.use("/api/products", productsRoutes);
