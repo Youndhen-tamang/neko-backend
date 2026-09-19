@@ -58,6 +58,12 @@ export const env = {
     secretKey: process.env.STRIPE_SECRET_KEY ?? "",
     webhookSecret: process.env.STRIPE_WEBHOOK_SECRET ?? "",
   },
+  esewa: {
+    /** Defaults are eSewa's public sandbox merchant. Set real values + ESEWA_MODE=live for production. */
+    productCode: process.env.ESEWA_PRODUCT_CODE ?? "EPAYTEST",
+    secretKey: process.env.ESEWA_SECRET_KEY ?? "8gBm/:&EnhH.1/q",
+    mode: (process.env.ESEWA_MODE === "live" ? "live" : "test") as "test" | "live",
+  },
   smtp: {
     host: process.env.SMTP_HOST ?? "",
     port: Number(process.env.SMTP_PORT ?? 587),
