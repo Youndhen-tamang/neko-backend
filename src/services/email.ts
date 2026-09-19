@@ -39,6 +39,9 @@ function getTransporter(): Transporter | null {
         user: env.smtp.user,
         pass: env.smtp.pass,
       },
+      connectionTimeout: 8_000,
+      greetingTimeout: 8_000,
+      socketTimeout: 15_000,
     });
   }
   return transporter;
@@ -49,6 +52,10 @@ export async function sendEmail(options: SendEmailOptions): Promise<boolean> {
   if (!mailer) {
     console.warn("SMTP is not configured; skipping email");
     return false;
+  }
+  if(process.env.NODE_ENV === "development") {
+    console.log("Dev: Emil not sent to", options.to);
+  return true;
   }
 
   await mailer.sendMail({

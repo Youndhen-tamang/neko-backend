@@ -136,28 +136,27 @@ async function placeAgencyOrder(input: {
     meta: { orderId, paymentMethod: input.paymentMethod },
   });
 
-  try {
-    const sent = await sendInvoiceEmail({
-      to: input.customerEmail,
-      agencyName: input.agency.brand_name,
-      logoUrl: input.agency.logo_url,
-      primaryColor: input.agency.primary_color,
-      invoiceNumber,
-      customerName: input.customerName,
-      items: input.items.map((item) => ({
-        name: item.name,
-        quantity: item.quantity,
-        unitPriceCents: item.unitPriceCents,
-      })),
-      totalCents,
-      currency: STORE_CURRENCY,
+  void sendInvoiceEmail({
+    to: input.customerEmail,
+    agencyName: input.agency.brand_name,
+    logoUrl: input.agency.logo_url,
+    primaryColor: input.agency.primary_color,
+    invoiceNumber,
+    customerName: input.customerName,
+    items: input.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      unitPriceCents: item.unitPriceCents,
+    })),
+    totalCents,
+    currency: STORE_CURRENCY,
+  })
+    .then(async (sent) => {
+      if (sent) await db("orders").where({ id: orderId }).update({ email_sent: true });
+    })
+    .catch((error) => {
+      console.error("Failed to send invoice email", error);
     });
-    if (sent) {
-      await db("orders").where({ id: orderId }).update({ email_sent: true });
-    }
-  } catch (error) {
-    console.error("Failed to send invoice email", error);
-  }
 
   if (input.channel === "whatsapp" && input.waUser) {
     try {
