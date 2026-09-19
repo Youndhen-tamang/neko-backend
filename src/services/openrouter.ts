@@ -150,10 +150,9 @@ export async function openRouterGenerateImage(opts: {
   aspectRatio?: string;
 }): Promise<{ imageBuffer: Buffer; mediaType: string; model: string }> {
   const model = opts.model ?? env.tryon.model;
-  const refs = (opts.images?.length
-    ? opts.images
-    : (opts.imageUrls || []).map((url) => ({ url }))
-  ).filter((ref) => ref.buffer?.length || ref.url);
+  const refs: ImageRef[] = (
+    opts.images?.length ? opts.images : (opts.imageUrls || []).map((url): ImageRef => ({ url }))
+  ).filter((ref) => Boolean(ref.buffer?.length || ref.url));
   if (!refs.length) {
     throw new HttpError(400, "At least one reference image is required");
   }

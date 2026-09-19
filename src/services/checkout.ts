@@ -93,19 +93,10 @@ export async function createCheckoutSession(input: CreateCheckoutInput) {
     },
   };
 
-  let session;
-  try {
-    session = await getStripe().checkout.sessions.create({
-      ...sessionPayload,
-      automatic_payment_methods: { enabled: true },
-    });
-  } catch (error) {
-    console.warn("Stripe automatic payment methods failed, retrying with card", error);
-    session = await getStripe().checkout.sessions.create({
-      ...sessionPayload,
-      payment_method_types: ["card"],
-    });
-  }
+  const session = await getStripe().checkout.sessions.create({
+    ...sessionPayload,
+    payment_method_types: ["card"],
+  });
 
   if (!session.url) {
     throw new HttpError(502, "Stripe did not return a payment link");
