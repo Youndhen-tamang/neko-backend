@@ -12,7 +12,7 @@ router.get("/status", (_req, res) => {
 
 router.post(
   "/",
-  simpleRateLimit({ windowMs: 10 * 60 * 1000, max: 20 }),
+  simpleRateLimit({ windowMs: 10 * 60 * 1000, max: 120 }),
   asyncHandler(async (req, res) => {
     const body = z
       .object({

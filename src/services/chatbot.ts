@@ -5,19 +5,22 @@ import { Agency } from "../types";
 import { HttpError } from "../utils/http";
 import { storeUrlForSlug } from "../utils/tenant";
 import { createCheckoutSession } from "./checkout";
-import { fulfillStripeSession } from "./fulfillment";
+import { createCodOrder, fulfillStripeSession } from "./fulfillment";
 import { openRouterChat } from "./openrouter";
 import { sizeHint } from "./tryon";
 
 export type ChatTurn = { role: "user" | "assistant"; content: string };
 
 export type ChatOrderSummary = {
+  id: string;
   invoice_number: string;
   status: string;
   customer_name: string;
   customer_email: string;
   shipping_address: string | null;
   total_cents: number;
+  payment_method?: string;
+  created_at: string;
   items: { name: string; quantity: number; unit_price_cents: number }[];
 };
 
@@ -277,12 +280,15 @@ async function loadOrderSummary(orderId: string, agencyId: string): Promise<Chat
   if (!order) return null;
   const items = await db("order_items").where({ order_id: order.id });
   return {
+    id: order.id,
     invoice_number: order.invoice_number,
     status: order.status,
     customer_name: order.customer_name,
     customer_email: order.customer_email,
     shipping_address: order.shipping_address,
     total_cents: order.total_cents,
+    payment_method: order.payment_method,
+    created_at: order.created_at,
     items: items.map((item) => ({
       name: item.name,
       quantity: item.quantity,
@@ -318,6 +324,24 @@ const CHANGE_RE = /\b(change|wait|cancel|nope|wrong|not yet|hold on|edit|update)
 
 export function isChangeOrder(text: string) {
   return CHANGE_RE.test(text.trim());
+}
+
+export function detectPaymentChoice(text: string): "cod" | "stripe" | null {
+  const compact = text.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (
+    /\b(cash on delivery|cash|cod|pay (on|at) delivery|pay when (it )?arrives|pay later)\b/.test(compact) ||
+    closeEnough(compact, "cash on delivery", 2) ||
+    closeEnough(compact, "cod", 0)
+  ) {
+    return "cod";
+  }
+  if (
+    /\b(stripe|card|credit|debit|pay (online|now|by card)|payment link|apple pay|google pay)\b/.test(compact) ||
+    closeEnough(compact, "stripe", 1)
+  ) {
+    return "stripe";
+  }
+  return null;
 }
 
 export function isConfirmOrder(text: string) {
@@ -396,26 +420,27 @@ function inferCheckout(
     for (const text of userTurns) {
       const named = resolveCatalogProduct(catalog, { productName: text });
       if (named) product = named;
-      const spoken = text.replace(
-        /\b(?:number|no\.?|#)\s+(one|won|two|too|to|three|tree|four|for|five)\b/gi,
-        (_all, word: string) => {
-          const map: Record<string, string> = {
-            one: "1",
-            won: "1",
-            two: "2",
-            too: "2",
-            to: "2",
-            three: "3",
-            tree: "3",
-            four: "4",
-            for: "4",
-            five: "5",
-          };
-          return `number ${map[word.toLowerCase()] ?? word}`;
-        }
-      );
-      const numbered = spoken.match(/\b(?:number|no\.?|#)\s*([1-9]|10)\b/i) || spoken.match(/\b([1-9]|10)\b/);
-      if (numbered && offered.length) product = offered[Number(numbered[1]) - 1] ?? product;
+      const choiceMap: Record<string, number> = {
+        "1": 1,
+        one: 1,
+        won: 1,
+        "2": 2,
+        two: 2,
+        too: 2,
+        "3": 3,
+        three: 3,
+        "4": 4,
+        four: 4,
+        "5": 5,
+        five: 5,
+      };
+      const choices = text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .map((token) => choiceMap[token])
+        .filter((value): value is number => Boolean(value));
+      if (choices.length && offered.length) product = offered[choices[choices.length - 1] - 1] ?? product;
     }
   }
 
@@ -424,6 +449,7 @@ function inferCheckout(
 
   let name: string | undefined;
   for (const text of userTurns) {
+    if (/^yes\b/i.test(text.trim()) && /\bma'?a?m\b/i.test(text)) continue;
     const phrase = text.match(
       /(?:full name|my name|name is)\s+([A-Za-z][A-Za-z.'-]+(?:\s+[A-Za-z][A-Za-z.'-]+)+)/i
     );
@@ -494,8 +520,31 @@ function stripChoicePrompts(text: string) {
 
 function payInstructions(channel: ChatChannel) {
   return channel === "whatsapp"
-    ? "Tap Pay now. On Stripe you can use Apple Pay, Google Pay, Link, or a card. I will never ask for your card number here."
-    : "Use Pay on Stripe below. On that page you can use Apple Pay, Google Pay, Link, or a card. I will never ask for your card number in this chat.";
+    ? "Tap Pay now. On Stripe you must type your own card details, or use Apple Pay, Google Pay, or Link. I cannot enter card numbers for you."
+    : "I will open Stripe for you. You must type your card details yourself, or use Apple Pay, Google Pay, or Link. I cannot enter card numbers on your behalf.";
+}
+
+function paymentChoicePrompt(action: PendingCheckout, products: CatalogProduct[]) {
+  const lines = action.items.map((item, index) => {
+    const product = resolveCatalogProduct(products, item);
+    const label = product?.name || item.productName || "item";
+    const price = product ? ` — ${money(product.price_cents * item.quantity)}` : "";
+    return `${index + 1}. ${label} × ${item.quantity}${price}`;
+  });
+  const total = action.items.reduce((sum, item) => {
+    const product = resolveCatalogProduct(products, item);
+    return sum + (product ? product.price_cents * item.quantity : 0);
+  }, 0);
+
+  return `Your order is ready.
+
+${lines.join("\n")}
+Ship to: ${action.shippingAddress}
+Email: ${action.customerEmail}${action.customerPhone ? `\nPhone: ${action.customerPhone}` : ""}
+Total: ${money(total)}
+
+How would you like to pay? Say cash on delivery, or say Stripe.
+If you choose Stripe, you will need to type your card details yourself on the Stripe page. I cannot enter card numbers for you. Cash on delivery means you pay when the dress arrives.`;
 }
 
 function extractInvoiceNumbers(text: string) {
@@ -599,7 +648,7 @@ async function startStripeCheckout(
     .join(", ");
 
   return {
-    answer: `Your payment link for ${summary} is ready. Total ${money(checkout.subtotal)}. ${payInstructions(channel)}`,
+    answer: `Your Stripe payment link for ${summary} is ready. Total ${money(checkout.subtotal)}. ${payInstructions(channel)}`,
     checkoutUrl: checkout.checkoutUrl,
     checkoutSessionId: checkout.sessionId,
     products: checkout.lineItems.map((item) => ({
@@ -611,26 +660,71 @@ async function startStripeCheckout(
   };
 }
 
-function readBackOrder(action: PendingCheckout, products: CatalogProduct[]) {
-  const lines = action.items.map((item, index) => {
+async function startCodCheckout(
+  agency: Agency,
+  action: PendingCheckout,
+  products: CatalogProduct[],
+  channel: ChatChannel,
+  checkoutMetadata?: Record<string, string>
+): Promise<ChatResult> {
+  const resolvedItems: { productId: string; quantity: number }[] = [];
+  const missing: string[] = [];
+
+  for (const item of action.items) {
     const product = resolveCatalogProduct(products, item);
-    const label = product?.name || item.productName || "item";
-    const price = product ? ` — ${money(product.price_cents * item.quantity)}` : "";
-    return `${index + 1}. ${label} × ${item.quantity}${price}`;
+    if (!product) {
+      missing.push(item.productName || item.productId || "that item");
+      continue;
+    }
+    if (product.stock < item.quantity) {
+      missing.push(`${product.name} (only ${product.stock} left)`);
+      continue;
+    }
+    resolvedItems.push({ productId: product.id, quantity: item.quantity });
+  }
+
+  if (missing.length || !resolvedItems.length) {
+    return {
+      answer: `I couldn't place the cash-on-delivery order yet: ${missing.join(", ") || "no matching catalog items"}.`,
+    };
+  }
+
+  const placed = await createCodOrder({
+    agency,
+    customerName: action.customerName,
+    customerEmail: action.customerEmail,
+    customerPhone: action.customerPhone,
+    shippingAddress: action.shippingAddress,
+    items: resolvedItems,
+    channel,
+    waUser: checkoutMetadata?.waUser,
   });
-  const total = action.items.reduce((sum, item) => {
-    const product = resolveCatalogProduct(products, item);
-    return sum + (product ? product.price_cents * item.quantity : 0);
-  }, 0);
 
-  return `Please confirm this order before I send a payment link.
+  const order = await loadOrderSummary(placed.id, agency.id);
+  const details = order ? thankYouMessage(order) : `Thank you for ordering. Invoice ${placed.invoice_number} is confirmed.`;
+  return {
+    answer: `${details}\n\nPayment is cash on delivery. Please keep ${money(placed.total_cents)} ready when the order arrives.`,
+    order: order ?? {
+      id: placed.id,
+      invoice_number: placed.invoice_number,
+      status: placed.status,
+      customer_name: placed.customer_name,
+      customer_email: placed.customer_email,
+      shipping_address: placed.shipping_address,
+      total_cents: placed.total_cents,
+      payment_method: placed.payment_method,
+      created_at: placed.created_at,
+      items: placed.items.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        unit_price_cents: item.unit_price_cents,
+      })),
+    },
+  };
+}
 
-${lines.join("\n")}
-Ship to: ${action.shippingAddress}
-Email: ${action.customerEmail}${action.customerPhone ? `\nPhone: ${action.customerPhone}` : ""}
-Total: ${money(total)}
-
-Say place order if this is correct, or say change if something is wrong. I will never ask for your card number here. Payment is on Stripe with Apple Pay, Google Pay, Link, or a card.`;
+function readBackOrder(action: PendingCheckout, products: CatalogProduct[]) {
+  return paymentChoicePrompt(action, products);
 }
 
 export async function handleStoreChat(options: {
@@ -673,12 +767,26 @@ export async function handleStoreChat(options: {
   const inferred = inferCheckout(history, message, products);
   const pending = mergeCheckout(options.pendingCheckout, inferred);
 
-  if (pending && message && isConfirmOrder(message) && !isChangeOrder(message)) {
-    try {
-      return await startStripeCheckout(agency, pending, products, channel, checkoutMetadata);
-    } catch (error) {
-      const reason = error instanceof HttpError ? error.message : "I couldn't create the payment link just now.";
-      return { answer: reason, pendingCheckout: pending };
+  if (pending && message && !isChangeOrder(message)) {
+    const choice = detectPaymentChoice(message);
+    if (choice === "cod") {
+      try {
+        return await startCodCheckout(agency, pending, products, channel, checkoutMetadata);
+      } catch (error) {
+        const reason = error instanceof HttpError ? error.message : "I couldn't place the cash-on-delivery order just now.";
+        return { answer: reason, pendingCheckout: pending };
+      }
+    }
+    if (choice === "stripe") {
+      try {
+        return await startStripeCheckout(agency, pending, products, channel, checkoutMetadata);
+      } catch (error) {
+        const reason = error instanceof HttpError ? error.message : "I couldn't create the payment link just now.";
+        return { answer: reason, pendingCheckout: pending };
+      }
+    }
+    if (isConfirmOrder(message)) {
+      return { answer: paymentChoicePrompt(pending, products), pendingCheckout: pending };
     }
   }
 
@@ -730,11 +838,11 @@ If they want to order:
 1. After they pick a piece, remember that choice. Never ask which item they want again, never say "Say 1" again, and set "products" to [].
 2. Ask for order details one or two at a time: full name, email, then a shipping location.
 3. Accept any location they give — a city, municipality, landmark, neighborhood, or rough description is enough. Do not validate, complete, or ask for street, ward, postal code, or country. Do not call an address incomplete.
-4. As soon as you have an in-stock product, quantity, full name, email, and any location they stated, set "checkout" to that draft using their location as shippingAddress. The backend will read it back and wait for "place order". Do not tell them the payment link is ready until they confirm.
+4. As soon as you have an in-stock product, quantity, full name, email, and any location they stated, set "checkout" to that draft using their location as shippingAddress. The backend will read it back and ask cash on delivery or Stripe. Do not send a payment link yourself.
 ${paymentRule}
 6. If they ask about an order or invoice but have not given an invoice number, ask for it (for example INV-LUMINA-1001). Do not invent order details.
 7. Do not emit checkout again unless they change the order.
-8. Never ask for card numbers or payment details. Stripe handles payment after they confirm.
+8. Never ask for card numbers or payment details. If they choose Stripe, tell them they must type card details themselves. If they choose cash on delivery, they pay when the order arrives.
 9. "products" lists up to 5 catalog ids only while they are still choosing. After they pick an item, always return []. Never write product URLs yourself.
 
 Return JSON only:
@@ -775,7 +883,16 @@ or
   const draft = mergeCheckout(parsed.checkout, inferred, pending);
 
   if (draft) {
-    if (message && isConfirmOrder(message) && !isChangeOrder(message)) {
+    const choice = message && !isChangeOrder(message) ? detectPaymentChoice(message) : null;
+    if (choice === "cod") {
+      try {
+        return await startCodCheckout(agency, draft, products, channel, checkoutMetadata);
+      } catch (error) {
+        const reason = error instanceof HttpError ? error.message : "I couldn't place the cash-on-delivery order just now.";
+        answer = `${answer}\n\n${reason}`.trim();
+        pendingCheckout = draft;
+      }
+    } else if (choice === "stripe") {
       try {
         return await startStripeCheckout(agency, draft, products, channel, checkoutMetadata);
       } catch (error) {

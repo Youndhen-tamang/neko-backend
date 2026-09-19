@@ -5,7 +5,7 @@ import { requireAuth } from "../../middleware/auth";
 import { requireAgencyMatch, resolveTenant } from "../../middleware/tenant";
 import { createCheckoutSession } from "../../services/checkout";
 import { createNotification } from "../../services/notifications";
-import { fulfillStripeSession } from "../../services/fulfillment";
+import { createCodOrder, fulfillStripeSession } from "../../services/fulfillment";
 import { ORDER_STATUSES } from "../../types";
 import { asyncHandler, HttpError } from "../../utils/http";
 
@@ -43,6 +43,54 @@ router.post(
     });
 
     res.json({ checkoutUrl: checkout.checkoutUrl, sessionId: checkout.sessionId });
+  })
+);
+
+router.post(
+  "/cod",
+  resolveTenant,
+  asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        customerName: z.string().min(2),
+        customerEmail: z.string().email(),
+        customerPhone: z.string().optional(),
+        shippingAddress: z.string().min(2),
+        items: z
+          .array(
+            z.object({
+              productId: z.string().uuid(),
+              quantity: z.number().int().positive(),
+            })
+          )
+          .min(1),
+      })
+      .parse(req.body);
+
+    const order = await createCodOrder({
+      agency: req.agency!,
+      customerName: body.customerName,
+      customerEmail: body.customerEmail,
+      customerPhone: body.customerPhone,
+      shippingAddress: body.shippingAddress,
+      items: body.items,
+      channel: "web",
+    });
+
+    res.json({ order });
+  })
+);
+
+router.get(
+  "/placed/:id",
+  resolveTenant,
+  asyncHandler(async (req, res) => {
+    const order = await db("orders")
+      .where({ id: req.params.id, agency_id: req.agency!.id })
+      .first();
+    if (!order) throw new HttpError(404, "Order not found");
+    const items = await db("order_items").where({ order_id: order.id });
+    res.json({ order: { ...order, items } });
   })
 );
 

@@ -77,6 +77,7 @@ export const env = {
   },
   elevenLabs: {
     apiKey: process.env.ELEVENLABS_API_KEY ?? "",
+    /** Premade voice id from backend/.env. Library voices 402 on the free plan. Default: Rachel. */
     voiceId: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",
     model: process.env.ELEVENLABS_MODEL ?? "eleven_flash_v2_5",
   },

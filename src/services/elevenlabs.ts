@@ -18,7 +18,7 @@ export async function synthesizeSpeech(text: string): Promise<{ audio: Buffer; c
     throw new HttpError(503, "ElevenLabs is not configured");
   }
 
-  const cacheKey = `${env.elevenLabs.voiceId}:${spoken}`;
+  const cacheKey = `${env.elevenLabs.voiceId}:1.15:${spoken}`;
   const cached = cache.get(cacheKey);
   if (cached) {
     return { audio: cached, contentType: "audio/mpeg" };
@@ -39,6 +39,7 @@ export async function synthesizeSpeech(text: string): Promise<{ audio: Buffer; c
         voice_settings: {
           stability: 0.45,
           similarity_boost: 0.8,
+          speed: 1.15,
         },
       }),
       signal: AbortSignal.timeout(30_000),
