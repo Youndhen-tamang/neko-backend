@@ -162,7 +162,9 @@ export function formatWhatsAppReply(result: ChatResult): string {
   let text = result.answer.trim();
   const products = result.products ?? [];
   if (products.length) {
-    const block = products.map((p) => `• ${p.name} — ${money(p.price_cents)}\n${p.url}`).join("\n\n");
+    const block = products
+      .map((p, index) => `${index + 1}. ${p.name} — ${money(p.price_cents)}\n${p.url}`)
+      .join("\n\n");
     text = `${text}\n\n${block}\n\nSee it on you: ${products[0].tryOnUrl}`;
   }
   return text.slice(0, WA_TEXT_LIMIT);

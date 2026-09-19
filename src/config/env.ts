@@ -75,4 +75,9 @@ export const env = {
   tryon: {
     model: process.env.TRYON_MODEL ?? "google/gemini-2.5-flash-image",
   },
+  elevenLabs: {
+    apiKey: process.env.ELEVENLABS_API_KEY ?? "",
+    voiceId: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",
+    model: process.env.ELEVENLABS_MODEL ?? "eleven_flash_v2_5",
+  },
 };

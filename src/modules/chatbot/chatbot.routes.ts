@@ -22,6 +22,23 @@ router.post(
             })
           )
           .optional(),
+        pendingCheckout: z
+          .object({
+            customerName: z.string().min(2),
+            customerEmail: z.string().email(),
+            customerPhone: z.string().optional(),
+            shippingAddress: z.string().min(4),
+            items: z
+              .array(
+                z.object({
+                  productId: z.string().optional(),
+                  productName: z.string().optional(),
+                  quantity: z.coerce.number().int().positive(),
+                })
+              )
+              .min(1),
+          })
+          .optional(),
       })
       .refine((value) => Boolean(value.message || value.checkoutSessionId), {
         message: "Message or checkoutSessionId is required",
@@ -33,6 +50,7 @@ router.post(
       message: body.message,
       history: body.history,
       checkoutSessionId: body.checkoutSessionId,
+      pendingCheckout: body.pendingCheckout,
     });
 
     res.json(result);

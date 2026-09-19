@@ -71,7 +71,14 @@ async function loadHistory(conversationId: string, excludeId: string): Promise<C
   }));
 }
 
-async function recordOutbound(conversationId: string, agencyId: string, text: string, waMessageId?: string, type = "text") {
+async function recordOutbound(
+  conversationId: string,
+  agencyId: string,
+  text: string,
+  waMessageId?: string,
+  type = "text",
+  meta?: Record<string, unknown>
+) {
   await db("wa_messages").insert({
     id: crypto.randomUUID(),
     conversation_id: conversationId,
@@ -80,7 +87,32 @@ async function recordOutbound(conversationId: string, agencyId: string, text: st
     wa_message_id: waMessageId ?? null,
     type,
     text,
+    ...(meta ? { meta: JSON.stringify(meta) } : {}),
   });
+}
+
+function asPendingCheckout(value: unknown) {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as { pendingCheckout?: unknown };
+  return record.pendingCheckout;
+}
+
+async function loadPendingCheckout(conversationId: string) {
+  const row = await db("wa_messages")
+    .where({ conversation_id: conversationId, direction: "out" })
+    .orderBy("created_at", "desc")
+    .first();
+  if (!row?.meta) return undefined;
+  const meta = typeof row.meta === "string" ? JSON.parse(row.meta) : row.meta;
+  return asPendingCheckout(meta) as
+    | {
+        customerName: string;
+        customerEmail: string;
+        customerPhone?: string;
+        shippingAddress: string;
+        items: { productId?: string; productName?: string; quantity: number }[];
+      }
+    | undefined;
 }
 
 async function handleMessage(cfg: WaConfig, msg: WaInboundMessage, profileName?: string) {
@@ -131,12 +163,20 @@ async function handleMessage(cfg: WaConfig, msg: WaInboundMessage, profileName?:
     history,
     channel: "whatsapp",
     checkoutSessionId: conversation.checkout_session_id ?? undefined,
+    pendingCheckout: await loadPendingCheckout(conversation.id),
     checkoutMetadata: { waUser: msg.from },
   });
 
   const reply = formatWhatsAppReply(result);
   const sentId = await sendText(cfg, msg.from, reply);
-  await recordOutbound(conversation.id, cfg.agency.id, reply, sentId);
+  await recordOutbound(
+    conversation.id,
+    cfg.agency.id,
+    reply,
+    sentId,
+    "text",
+    result.pendingCheckout ? { pendingCheckout: result.pendingCheckout } : undefined
+  );
 
   if (result.checkoutUrl) {
     const ctaId = await sendCtaUrl(cfg, msg.from, "Your secure payment link is ready.", "Pay now", result.checkoutUrl);

@@ -56,8 +56,8 @@ export async function createCheckoutSession(input: CreateCheckoutInput) {
   const successPath = input.successPath ?? "/checkout/success";
   const extraQuery = input.successQuery ? `&${input.successQuery.replace(/^\?/, "").replace(/^&/, "")}` : "";
 
-  const session = await getStripe().checkout.sessions.create({
-    mode: "payment",
+  const sessionPayload = {
+    mode: "payment" as const,
     customer_email: input.customerEmail,
     success_url: `${storeUrlForSlug(env.storeUrl, input.agency.slug, successPath)}?session_id={CHECKOUT_SESSION_ID}${extraQuery}`,
     cancel_url: storeUrlForSlug(env.storeUrl, input.agency.slug, input.cancelPath ?? "/cart"),
@@ -91,7 +91,21 @@ export async function createCheckoutSession(input: CreateCheckoutInput) {
       ),
       subtotalCents: String(subtotal),
     },
-  });
+  };
+
+  let session;
+  try {
+    session = await getStripe().checkout.sessions.create({
+      ...sessionPayload,
+      automatic_payment_methods: { enabled: true },
+    });
+  } catch (error) {
+    console.warn("Stripe automatic payment methods failed, retrying with card", error);
+    session = await getStripe().checkout.sessions.create({
+      ...sessionPayload,
+      payment_method_types: ["card"],
+    });
+  }
 
   if (!session.url) {
     throw new HttpError(502, "Stripe did not return a payment link");

@@ -13,7 +13,7 @@ export type ProductDraft = {
   suggested_price_range?: string;
 };
 
-const DEFAULT_MODEL = "google/gemini-2.5-flash-lite";
+const DEFAULT_MODEL = "gpt-5.6-luna";
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 
 async function openRouterRequest(path: string, body: Record<string, unknown>, timeoutMs: number) {
