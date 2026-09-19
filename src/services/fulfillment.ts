@@ -3,6 +3,7 @@ import { Agency } from "../types";
 import { HttpError } from "../utils/http";
 import { sendInvoiceEmail } from "./email";
 import { createNotification } from "./notifications";
+import { checkEsewaStatus, formatEsewaAmount } from "./esewa";
 import { getStripe } from "./stripe";
 import { notifyWhatsAppOrderPaid } from "./whatsapp-inbound";
 import { money, STORE_CURRENCY } from "../utils/money";
@@ -49,7 +50,7 @@ async function placeAgencyOrder(input: {
   customerPhone?: string | null;
   shippingAddress: string;
   items: OrderLine[];
-  paymentMethod: "stripe" | "cod";
+  paymentMethod: "stripe" | "cod" | "esewa";
   stripeCheckoutSessionId?: string | null;
   stripePaymentIntentId?: string | null;
   channel?: string;
@@ -81,7 +82,9 @@ async function placeAgencyOrder(input: {
     [order] = await db("orders").insert(row).returning("*");
   } catch {
     const { payment_method: _paymentMethod, ...legacy } = row;
-    if (input.paymentMethod === "cod") legacy.stripe_payment_intent_id = legacy.stripe_payment_intent_id || "cod";
+    if (input.paymentMethod !== "stripe") {
+      legacy.stripe_payment_intent_id = legacy.stripe_payment_intent_id || input.paymentMethod;
+    }
     [order] = await db("orders").insert(legacy).returning("*");
   }
 
@@ -119,7 +122,12 @@ async function placeAgencyOrder(input: {
     });
   }
 
-  const payNote = input.paymentMethod === "cod" ? "Cash on delivery" : "Paid with Stripe";
+  const payNote =
+    input.paymentMethod === "cod"
+      ? "Cash on delivery"
+      : input.paymentMethod === "esewa"
+        ? "Paid with eSewa"
+        : "Paid with Stripe";
   await createNotification({
     agencyId: input.agency.id,
     type: "order",
@@ -176,28 +184,23 @@ async function placeAgencyOrder(input: {
   };
 }
 
-export async function createCodOrder(input: {
-  agency: Agency;
-  customerName: string;
-  customerEmail: string;
-  customerPhone?: string;
-  shippingAddress: string;
-  items: { productId: string; quantity: number }[];
-  channel?: string;
-  waUser?: string;
-}): Promise<PlacedOrder> {
+/** Resolves cart items against published products and checks stock. */
+export async function buildOrderLines(
+  agency: Agency,
+  items: { productId: string; quantity: number }[]
+): Promise<OrderLine[]> {
   const products = await db("products")
     .whereIn(
       "id",
-      input.items.map((item) => item.productId)
+      items.map((item) => item.productId)
     )
-    .andWhere({ agency_id: input.agency.id, status: "published" });
+    .andWhere({ agency_id: agency.id, status: "published" });
 
-  if (products.length !== input.items.length) {
+  if (products.length !== items.length) {
     throw new HttpError(400, "One or more products are unavailable");
   }
 
-  const lines: OrderLine[] = input.items.map((item) => {
+  return items.map((item) => {
     const product = products.find((row) => row.id === item.productId)!;
     if (product.stock < item.quantity) {
       throw new HttpError(400, `${product.name} does not have enough stock`);
@@ -210,6 +213,19 @@ export async function createCodOrder(input: {
       imageUrl: productImages(product.images)[0] ?? null,
     };
   });
+}
+
+export async function createCodOrder(input: {
+  agency: Agency;
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string;
+  shippingAddress: string;
+  items: { productId: string; quantity: number }[];
+  channel?: string;
+  waUser?: string;
+}): Promise<PlacedOrder> {
+  const lines = await buildOrderLines(input.agency, input.items);
 
   return placeAgencyOrder({
     agency: input.agency,
@@ -255,4 +271,119 @@ export async function fulfillStripeSession(sessionId: string) {
     channel: session.metadata.channel,
     waUser: session.metadata.waUser,
   });
+}
+
+type EsewaPayload = {
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string | null;
+  shippingAddress: string;
+  items: OrderLine[];
+  channel?: string;
+  waUser?: string;
+};
+
+/** Stores the cart snapshot so the order can be placed after eSewa confirms payment. */
+export async function createEsewaPayment(input: {
+  agency: Agency;
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string;
+  shippingAddress: string;
+  items: { productId: string; quantity: number }[];
+  channel?: string;
+  waUser?: string;
+}): Promise<{ id: string; amountCents: number }> {
+  const lines = await buildOrderLines(input.agency, input.items);
+  const amountCents = lines.reduce((sum, item) => sum + item.unitPriceCents * item.quantity, 0);
+  if (amountCents <= 0) throw new HttpError(400, "Order total must be greater than zero");
+
+  const id = crypto.randomUUID();
+  const payload: EsewaPayload = {
+    customerName: input.customerName,
+    customerEmail: input.customerEmail,
+    customerPhone: input.customerPhone ?? null,
+    shippingAddress: input.shippingAddress,
+    items: lines,
+    channel: input.channel,
+    waUser: input.waUser,
+  };
+
+  await db("esewa_payments").insert({
+    id,
+    agency_id: input.agency.id,
+    amount_cents: amountCents,
+    status: "pending",
+    payload: JSON.stringify(payload),
+  });
+
+  return { id, amountCents };
+}
+
+async function orderWithItems(orderId: string): Promise<PlacedOrder | null> {
+  const order = await db("orders").where({ id: orderId }).first();
+  if (!order) return null;
+  const items = await db("order_items").where({ order_id: orderId });
+  return { ...order, items };
+}
+
+const ESEWA_FINAL_FAILURES = ["CANCELED", "NOT_FOUND", "FULL_REFUND", "PARTIAL_REFUND", "AMBIGUOUS"];
+
+/**
+ * Confirms the payment with eSewa's status API and places the order exactly once.
+ * Returns null when eSewa reports the payment is not complete.
+ */
+export async function fulfillEsewaPayment(transactionUuid: string, agencyId: string): Promise<PlacedOrder | null> {
+  const payment = await db("esewa_payments").where({ id: transactionUuid, agency_id: agencyId }).first();
+  if (!payment) return null;
+  if (payment.order_id) return orderWithItems(payment.order_id);
+
+  const status = await checkEsewaStatus({
+    transactionUuid,
+    totalAmount: formatEsewaAmount(payment.amount_cents),
+  });
+
+  if (status.status !== "COMPLETE") {
+    if (ESEWA_FINAL_FAILURES.includes(status.status)) {
+      await db("esewa_payments").where({ id: transactionUuid }).update({ status: "failed", updated_at: new Date() });
+    }
+    return null;
+  }
+
+  // Claim the row so two concurrent verify calls cannot both place an order.
+  const claimed = await db("esewa_payments")
+    .where({ id: transactionUuid })
+    .whereIn("status", ["pending", "failed"])
+    .update({ status: "processing", updated_at: new Date() });
+  if (!claimed) {
+    const again = await db("esewa_payments").where({ id: transactionUuid }).first();
+    if (again?.order_id) return orderWithItems(again.order_id);
+    throw new HttpError(409, "Payment is still being confirmed. Please refresh in a moment.");
+  }
+
+  const agency = await db("agencies").where({ id: payment.agency_id }).first();
+  if (!agency) return null;
+  const payload: EsewaPayload =
+    typeof payment.payload === "string" ? JSON.parse(payment.payload) : payment.payload;
+
+  try {
+    const order = await placeAgencyOrder({
+      agency,
+      customerName: payload.customerName,
+      customerEmail: payload.customerEmail,
+      customerPhone: payload.customerPhone,
+      shippingAddress: payload.shippingAddress,
+      items: payload.items,
+      paymentMethod: "esewa",
+      channel: payload.channel,
+      waUser: payload.waUser,
+    });
+    await db("esewa_payments")
+      .where({ id: transactionUuid })
+      .update({ status: "complete", ref_id: status.ref_id ?? null, order_id: order.id, updated_at: new Date() });
+    return order;
+  } catch (error) {
+    await db("esewa_payments").where({ id: transactionUuid }).update({ status: "pending", updated_at: new Date() });
+    throw error;
+  }
 }
