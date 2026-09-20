@@ -5,31 +5,22 @@ const MAX_CHARS = 500;
 const cache = new Map<string, Buffer>();
 const CACHE_LIMIT = 40;
 
-export function elevenLabsEnabled() {
-  return Boolean(env.elevenLabs.apiKey);
+function apiKeys(): string[] {
+  const keys = [env.elevenLabs.apiKey, env.elevenLabs.secondaryApiKey].filter(Boolean);
+  return [...new Set(keys)];
 }
 
-export async function synthesizeSpeech(text: string): Promise<{ audio: Buffer; contentType: string }> {
-  const spoken = text.replace(/\s+/g, " ").trim().slice(0, MAX_CHARS);
-  if (!spoken) {
-    throw new HttpError(400, "Nothing to speak");
-  }
-  if (!env.elevenLabs.apiKey) {
-    throw new HttpError(503, "ElevenLabs is not configured");
-  }
+export function elevenLabsEnabled() {
+  return apiKeys().length > 0;
+}
 
-  const cacheKey = `${env.elevenLabs.voiceId}:1.15:${spoken}`;
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    return { audio: cached, contentType: "audio/mpeg" };
-  }
-
+async function requestSpeech(apiKey: string, spoken: string): Promise<Buffer> {
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${env.elevenLabs.voiceId}`,
     {
       method: "POST",
       headers: {
-        "xi-api-key": env.elevenLabs.apiKey,
+        "xi-api-key": apiKey,
         "Content-Type": "application/json",
         Accept: "audio/mpeg",
       },
@@ -57,11 +48,43 @@ export async function synthesizeSpeech(text: string): Promise<{ audio: Buffer; c
     throw new HttpError(502, "Voice generation returned no audio");
   }
 
-  cache.set(cacheKey, audio);
-  if (cache.size > CACHE_LIMIT) {
-    const first = cache.keys().next().value;
-    if (first) cache.delete(first);
+  return audio;
+}
+
+export async function synthesizeSpeech(text: string): Promise<{ audio: Buffer; contentType: string }> {
+  const spoken = text.replace(/\s+/g, " ").trim().slice(0, MAX_CHARS);
+  if (!spoken) {
+    throw new HttpError(400, "Nothing to speak");
   }
 
-  return { audio, contentType: "audio/mpeg" };
+  const keys = apiKeys();
+  if (!keys.length) {
+    throw new HttpError(503, "ElevenLabs is not configured");
+  }
+
+  const cacheKey = `${env.elevenLabs.voiceId}:1.15:${spoken}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return { audio: cached, contentType: "audio/mpeg" };
+  }
+
+  let lastError: unknown;
+  for (let i = 0; i < keys.length; i++) {
+    try {
+      const audio = await requestSpeech(keys[i], spoken);
+      cache.set(cacheKey, audio);
+      if (cache.size > CACHE_LIMIT) {
+        const first = cache.keys().next().value;
+        if (first) cache.delete(first);
+      }
+      return { audio, contentType: "audio/mpeg" };
+    } catch (error) {
+      lastError = error;
+      if (i < keys.length - 1) {
+        console.warn("ElevenLabs primary key failed, retrying with secondary key");
+      }
+    }
+  }
+
+  throw lastError;
 }
