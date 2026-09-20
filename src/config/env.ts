@@ -79,7 +79,7 @@ export const env = {
   },
   integrationSecretKey: process.env.INTEGRATION_SECRET_KEY ?? "",
   tryon: {
-    model: process.env.TRYON_MODEL ?? "google/gemini-2.5-flash-image",
+    model: process.env.TRYON_MODEL ?? "google/gemini-3.1-flash-image",
   },
   elevenLabs: {
     apiKey: process.env.ELEVENLABS_API_KEY ?? "",

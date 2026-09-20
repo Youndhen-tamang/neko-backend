@@ -70,17 +70,19 @@ export async function generateTryOn(input: {
     model: env.tryon.model,
   });
 
-  const prompt = `Virtual try-on. Edit the customer photograph only.
+  const prompt = `Virtual try-on. Image 1 is the customer photograph. Image 2 is the product photograph.
 
-Keep the same person from the customer photo: same face, hair, skin tone, body, pose, shoes if visible, and background. Do not replace them with the model from the product photo. Do not copy the product photo's studio, chair, lighting, or composition.
+CHANGE the clothes. Replace whatever the customer is wearing with the garment from image 2. Match that garment's colour, fabric, neckline, sleeves, cut, and length. The output must not be the original customer photo.
 
-Take only the garment from the product photo and dress the customer in it. Match that garment's colour, fabric, neckline, sleeves, cut, and length. The catalog name is "${
-    input.product.name
-  }"${input.product.category ? ` (${input.product.category})` : ""} — use it as a label, not as a reason to invent a different outfit.
+KEEP the same person: face, hair, skin tone, body, pose, shoes if visible, and background. Do not replace them with the model from the product photo. Do not copy the product photo's studio, chair, lighting, or composition.
+
+The catalog name is "${input.product.name}"${
+    input.product.category ? ` (${input.product.category})` : ""
+  } — use it as a label, not as a reason to invent a different outfit.
 
 The customer is about ${Math.round(input.heightCm)} cm and ${Math.round(
     input.weightKg
-  )} kg; drape the garment realistically for that build. Photorealistic. Output a single edited photo of the customer wearing the garment.`;
+  )} kg; drape the garment realistically for that build. Photorealistic. Output a single full-body photo of the customer wearing the garment.`;
 
   try {
     const generated = await openRouterGenerateImage({

@@ -30,7 +30,7 @@ Each store connects its own WhatsApp number. The bot shares the storefront chat 
 | `WHATSAPP_GRAPH_VERSION` | Graph API version, default `v21.0`. |
 | `INTEGRATION_SECRET_KEY` | Random string used to encrypt stored access tokens. Changing it invalidates tokens already saved. |
 | `PUBLIC_API_URL` | Optional. Public base URL of this API, shown to store owners as the webhook URL. |
-| `TRYON_MODEL` | OpenRouter image model for virtual try-on, default `google/gemini-2.5-flash-image`. |
+| `TRYON_MODEL` | OpenRouter image model for virtual try-on, default `google/gemini-3.1-flash-image`. |
 
 Then in the Meta app → WhatsApp → Configuration → Webhook:
 

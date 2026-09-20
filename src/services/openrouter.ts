@@ -138,9 +138,17 @@ function extractChatImage(data: {
   return null;
 }
 
+function labeledPrompt(prompt: string, refs: ImageRef[]) {
+  const labels = refs
+    .map((ref, index) => `Image ${index + 1}: ${ref.label || `reference ${index + 1}`}`)
+    .join("\n");
+  return labels ? `${prompt}\n\n${labels}` : prompt;
+}
+
 /**
- * Generate an image from labeled references. Prefers chat completions so each
- * photo can be named (customer vs garment). Falls back to the Images API.
+ * Generate an image from labeled references. Uses the Images API first so
+ * reference photos are treated as edits, not chat attachments. Chat completions
+ * are only a fallback.
  */
 export async function openRouterGenerateImage(opts: {
   prompt: string;
@@ -157,62 +165,64 @@ export async function openRouterGenerateImage(opts: {
     throw new HttpError(400, "At least one reference image is required");
   }
 
-  const dataUrls = await Promise.all(refs.slice(0, 3).map((ref) => toDataUrl(ref)));
-  const content: Array<Record<string, unknown>> = [{ type: "text", text: opts.prompt }];
-  dataUrls.forEach((url, index) => {
-    const label = refs[index]?.label || `Image ${index + 1}`;
-    content.push({ type: "text", text: label });
-    content.push({ type: "image_url", image_url: { url } });
-  });
+  const sliced = refs.slice(0, 3);
+  const dataUrls = await Promise.all(sliced.map((ref) => toDataUrl(ref)));
+  const prompt = labeledPrompt(opts.prompt, sliced);
 
   try {
-    const chat = (await openRouterRequest(
-      "/chat/completions",
+    const data = (await openRouterRequest(
+      "/images",
       {
         model,
-        messages: [{ role: "user", content }],
-        modalities: ["image", "text"],
-        ...(opts.aspectRatio ? { image_config: { aspect_ratio: opts.aspectRatio } } : {}),
+        prompt,
+        n: 1,
+        ...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
+        input_references: dataUrls.map((url) => ({
+          type: "image_url",
+          image_url: { url },
+        })),
       },
       180_000
-    )) as { choices?: { message?: { images?: unknown; content?: unknown } }[] };
+    )) as {
+      data?: { b64_json?: string; media_type?: string }[];
+    };
 
-    const fromChat = extractChatImage(chat);
-    if (fromChat) {
-      return { ...fromChat, model };
+    const image = data.data?.[0];
+    if (image?.b64_json) {
+      return {
+        imageBuffer: Buffer.from(image.b64_json, "base64"),
+        mediaType: image.media_type || "image/png",
+        model,
+      };
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
-    console.warn("Try-on chat image path failed, using Images API", message.slice(0, 300));
+    console.warn("Try-on Images API path failed, using chat completions", message.slice(0, 300));
   }
 
-  const data = (await openRouterRequest(
-    "/images",
+  const content: Array<Record<string, unknown>> = [];
+  dataUrls.forEach((url, index) => {
+    content.push({ type: "text", text: sliced[index]?.label || `Image ${index + 1}` });
+    content.push({ type: "image_url", image_url: { url } });
+  });
+  content.push({ type: "text", text: prompt });
+
+  const chat = (await openRouterRequest(
+    "/chat/completions",
     {
       model,
-      prompt: opts.prompt,
-      n: 1,
-      ...(opts.aspectRatio ? { aspect_ratio: opts.aspectRatio } : {}),
-      input_references: dataUrls.map((url) => ({
-        type: "image_url",
-        image_url: { url },
-      })),
+      messages: [{ role: "user", content }],
+      modalities: ["image", "text"],
+      ...(opts.aspectRatio ? { image_config: { aspect_ratio: opts.aspectRatio } } : {}),
     },
     180_000
-  )) as {
-    data?: { b64_json?: string; media_type?: string }[];
-  };
+  )) as { choices?: { message?: { images?: unknown; content?: unknown } }[] };
 
-  const image = data.data?.[0];
-  if (!image?.b64_json) {
+  const fromChat = extractChatImage(chat);
+  if (!fromChat) {
     throw new HttpError(502, "The image model did not return an image");
   }
-
-  return {
-    imageBuffer: Buffer.from(image.b64_json, "base64"),
-    mediaType: image.media_type || "image/png",
-    model,
-  };
+  return { ...fromChat, model };
 }
 
 export async function draftProductFromImage(imageUrl: string): Promise<ProductDraft> {

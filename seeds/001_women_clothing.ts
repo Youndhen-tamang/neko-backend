@@ -125,11 +125,11 @@ const products: SeedProduct[] = [
   },
   {
     id: "33333333-3333-4333-8333-333333333010",
-    name: "Cropped Tweed Blazer",
+    name: "Denim Shirt Dress",
     description:
-      "Cropped bouclé blazer with structured shoulders, flap pockets, and gold-tone buttons. Hits at the high hip.",
-    category: "Outerwear",
-    tags: ["blazer", "tweed", "tailoring"],
+      "Short-sleeve washed denim shirt dress with a point collar, flap chest pockets, and a full button placket. Gathered at the waist into a flared skirt that hits mid-thigh.",
+    category: "Dresses",
+    tags: ["denim", "shirt-dress", "daywear"],
     images: [photo("photo-1591369822096-ffd140ec948f")],
     price_cents: 19800,
     stock: 10,
